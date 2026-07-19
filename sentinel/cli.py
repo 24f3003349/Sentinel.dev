@@ -95,6 +95,11 @@ def doctor() -> None:
 
 def run_demo() -> int:
     try:
+        import os
+
+        if os.getenv("SENTINEL_REQUIRE_LIVE_AI", "").lower() in {"1", "true", "yes"} and not os.getenv("OPENAI_API_KEY"):
+            console.print("[bold red]LIVE GPT-5.6 SOL REQUIRED:[/] Set OPENAI_API_KEY with OpenAI Platform API billing. Sentinel will not substitute the deterministic demo path.")
+            return 2
         report = _execute(DEFAULT_TARGET, defcon=5, patch=True)
         final = report.verification or report.sandbox
         return 0 if final.status == RunStatus.passed else 1
