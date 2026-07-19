@@ -1,11 +1,11 @@
 .venv/
 __pycache__/
 *.py[cod]
+*.db
 .pytest_cache/
 .ruff_cache/
 reports/
-**/graphify-out/cache/
-**/graphify-out/manifest.json
+**/graphify-out/
 dashboard/.next/
 dashboard/node_modules/
 .env

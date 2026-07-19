@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -56,15 +55,17 @@ class SandboxResult(BaseModel):
     stderr: str = ""
     telemetry: list[TelemetrySample] = Field(default_factory=list)
     failure_kind: str | None = None
+    policy_violations: list[str] = Field(default_factory=list)
     runner: str
 
 
 class PatchPlan(BaseModel):
     title: str
     rationale: str
-    file_path: str
+    file_path: str = "main.py"
     patched_source_b64: str
-    branch_name: str = "sentinel/fix-race-condition"
+    verification_note: str
+    branch_name: str = "sentinel/fix"
 
 
 class GitPatchResult(BaseModel):
@@ -83,5 +84,5 @@ class SentinelReport(BaseModel):
     sandbox: SandboxResult
     patch: PatchPlan | None = None
     git: GitPatchResult | None = None
+    verification: SandboxResult | None = None
     notes: list[str] = Field(default_factory=list)
-    extra: dict[str, Any] = Field(default_factory=dict)

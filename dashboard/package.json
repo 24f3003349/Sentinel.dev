@@ -2,6 +2,6 @@
   "name": "sentinel-war-room",
   "private": true,
   "scripts": { "dev": "next dev", "build": "next build", "start": "next start" },
-  "dependencies": { "next": "15.5.20", "react": "19.1.0", "react-dom": "19.1.0" },
+  "dependencies": { "@xyflow/react": "12.8.3", "@xterm/xterm": "5.5.0", "next": "15.5.20", "react": "19.1.0", "react-dom": "19.1.0" },
   "devDependencies": { "@types/node": "22.15.3", "@types/react": "19.1.2", "typescript": "5.8.3" }
 }

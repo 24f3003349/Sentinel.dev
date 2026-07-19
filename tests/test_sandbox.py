@@ -1,12 +1,14 @@
-from pathlib import Path
-
-from sentinel.sandbox import run_attack
-from sentinel.schemas import RunStatus
-from sentinel.swarm_agents import decode_code, deterministic_chaos_plan
+from sentinel.sandbox import IMAGE_MEMORY_BYTES, _failure_from_logs
+from sentinel.schemas import TelemetrySample
 
 
-def test_local_arena_detects_oversell() -> None:
-    target = Path(__file__).resolve().parents[1] / "dummy_target"
-    result = run_attack(target, decode_code(deterministic_chaos_plan(2).attack_code_b64), prefer_docker=False)
-    assert result.status == RunStatus.failed
-    assert result.failure_kind == "race-condition"
+def test_marker_classification() -> None:
+    failure, violations = _failure_from_logs("RACE_INVARIANT_VIOLATION", [])
+    assert failure == "race-condition"
+    assert violations == []
+
+
+def test_memory_policy_classification() -> None:
+    failure, violations = _failure_from_logs("", [TelemetrySample(elapsed_seconds=1, memory_bytes=int(IMAGE_MEMORY_BYTES * 0.81))], "memory_leak")
+    assert failure == "resource-exhaustion"
+    assert violations

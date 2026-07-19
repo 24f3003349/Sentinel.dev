@@ -1,0 +1,2 @@
+# Generated dependency entry point for pip/uv. The lockfile is authoritative.
+-e .[dev]

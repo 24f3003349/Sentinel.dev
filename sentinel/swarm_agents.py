@@ -1,4 +1,4 @@
-"""Small, auditable OpenAI SDK integration with safe offline behaviour."""
+"""Structured OpenAI agents with deterministic, target-specific offline plans."""
 from __future__ import annotations
 
 import base64
@@ -10,155 +10,169 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from sentinel.schemas import ChaosPlan, KnowledgeGraph, PatchPlan, SandboxResult
 
 MODEL = os.getenv("SENTINEL_OPENAI_MODEL", "gpt-5.6-sol")
-_RETRY = dict(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(Exception),
-    reraise=True,
-)
+_RETRY = dict(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(Exception), reraise=True)
 
 
-def _encode(text: str) -> str:
-    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+def _encode(value: str) -> str:
+    return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
 
 def decode_code(value: str) -> str:
     return base64.b64decode(value.encode("ascii"), validate=True).decode("utf-8")
 
 
-def deterministic_chaos_plan(risk_level: int) -> ChaosPlan:
-    workers = min(200, max(10, risk_level * 25))
-    code = f'''import asyncio
-from domain import BookingService
+def _kind(target: Path) -> str:
+    return target.resolve().name
+
+
+def _context(target: Path, graph: KnowledgeGraph) -> str:
+    source = (target / "main.py").read_text(encoding="utf-8")
+    return f"Target directory: {target.name}\nTarget source:\n{source}\nGraph:\n{graph.model_dump_json()}"
+
+
+def deterministic_chaos_plan(target: Path, risk_level: int) -> ChaosPlan:
+    kind = _kind(target)
+    if kind == "race_condition":
+        code, signal, title = '''import asyncio
+import aiohttp
 
 async def main() -> None:
-    service = BookingService(initial_inventory={{"concert-2026": 1}})
-    results = await asyncio.gather(*[service.book("concert-2026") for _ in range({workers})])
-    confirmed = sum(1 for item in results if item["confirmed"])
-    remaining = service.inventory["concert-2026"]
-    print(f"confirmed={{confirmed}} remaining={{remaining}}")
-    if confirmed > 1 or remaining < 0:
-        raise SystemExit("INVARIANT_VIOLATION: oversold ticket inventory")
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+        replies = await asyncio.gather(*[session.post("http://127.0.0.1:8000/book") for _ in range(50)], return_exceptions=True)
+        successes = sum(1 for reply in replies if not isinstance(reply, Exception) and reply.status == 200)
+        print(f"booking_successes={successes}")
+        if successes > 1:
+            raise SystemExit("RACE_INVARIANT_VIOLATION: more than one customer booked one ticket")
 
-if __name__ == "__main__":
-    asyncio.run(main())
-'''
-    return ChaosPlan(
-        title="Concurrent inventory invariant probe",
-        rationale="Simultaneous reservations expose check-then-act races missed by single-user tests.",
-        attack_code_b64=_encode(code),
-        expected_signal="INVARIANT_VIOLATION: oversold ticket inventory",
-        risk_level=risk_level,
-    )
+asyncio.run(main())
+''', "RACE_INVARIANT_VIOLATION", "Concurrent SQLite booking probe"
+    elif kind == "memory_leak":
+        code, signal, title = '''import asyncio
+import aiohttp
+
+async def main() -> None:
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6)) as session:
+            response = await session.get("http://127.0.0.1:8000/export?size_mb=384")
+            print(f"export_status={response.status}")
+            if response.status != 200:
+                raise SystemExit("MEMORY_PRESSURE_VIOLATION: export failed under constrained memory")
+    except Exception as exc:
+        raise SystemExit(f"MEMORY_PRESSURE_VIOLATION: {type(exc).__name__}")
+
+asyncio.run(main())
+''', "MEMORY_PRESSURE_VIOLATION", "Constrained-memory export probe"
+    elif kind == "redos_attack":
+        code, signal, title = '''import asyncio
+import aiohttp
+
+async def main() -> None:
+    payload = {"text": "a" * 30 + "!"}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as session:
+            response = await session.post("http://127.0.0.1:8000/validate", json=payload)
+            print(f"validation_status={response.status}")
+    except Exception as exc:
+        raise SystemExit(f"REDOS_TIMEOUT_VIOLATION: {type(exc).__name__}")
+
+asyncio.run(main())
+''', "REDOS_TIMEOUT_VIOLATION", "Catastrophic-regex timeout probe"
+    else:
+        raise ValueError(f"Unsupported Sentinel target: {target}")
+    return ChaosPlan(title=title, rationale="A concurrent or constrained production-shaped request exposes a happy-path blind spot.", attack_code_b64=_encode(code), expected_signal=signal, risk_level=risk_level)
 
 
 @retry(**_RETRY)
-def _openai_chaos_plan(graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
+def _openai_chaos(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
     from openai import OpenAI
-
     client = OpenAI(timeout=120.0, max_retries=0)
-    response = client.responses.parse(
-        model=MODEL,
-        input=[
-            {
-                "role": "system",
-                "content": (
-                    "You are Sentinel's defensive chaos engineer. Generate only a local Python "
-                    "invariant test. Do not use network, filesystem deletion, subprocesses, or secrets. "
-                    "Return executable Python only as base64 in attack_code_b64."
-                ),
-            },
-            {"role": "user", "content": f"Graph: {graph.model_dump_json()}\nRisk: {risk_level}"},
-        ],
-        text_format=ChaosPlan,
-    )
+    response = client.responses.parse(model=MODEL, input=[{"role": "system", "content": "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python HTTP probe for the supplied FastAPI target. No filesystem writes, subprocesses, external network, or secret access. Return executable code only as base64 in attack_code_b64."}, {"role": "user", "content": _context(target, graph) + f"\nDEFCON: {risk_level}"}], text_format=ChaosPlan)
     if response.output_parsed is None:
-        raise RuntimeError("Structured response contained no parsed chaos plan")
+        raise RuntimeError("No structured chaos plan returned")
     return response.output_parsed
 
 
-def generate_chaos_plan(graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
-    """Use Responses structured parsing when configured; otherwise use a deterministic fixture.
-
-    Base64 is required for generated executable content so JSON escaping cannot corrupt it.
-    """
+def generate_chaos_plan(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
     if not os.getenv("OPENAI_API_KEY"):
-        return deterministic_chaos_plan(risk_level)
+        return deterministic_chaos_plan(target, risk_level)
     try:
-        return _openai_chaos_plan(graph, risk_level)
+        return _openai_chaos(target, graph, risk_level)
     except Exception:
-        # A judge should still see a working safety demo during temporary API failures.
-        return deterministic_chaos_plan(risk_level)
+        return deterministic_chaos_plan(target, risk_level)
 
 
-def _fixed_domain_source() -> str:
-    return '''"""Domain model intentionally simple enough to make the concurrency invariant visible."""
-from __future__ import annotations
-
-import asyncio
-
-
-class BookingService:
-    def __init__(self, initial_inventory: dict[str, int]) -> None:
-        self.inventory = dict(initial_inventory)
-        self._lock = asyncio.Lock()
-
-    async def book(self, ticket_id: str) -> dict[str, bool]:
-        async with self._lock:
-            available = self.inventory.get(ticket_id, 0)
-            if available <= 0:
-                return {"confirmed": False}
-            await asyncio.sleep(0.005)
-            self.inventory[ticket_id] = available - 1
-            return {"confirmed": True}
+def _fixed_source(kind: str) -> str:
+    if kind == "race_condition":
+        return '''import asyncio
+import os
+import sqlite3
+from pathlib import Path
+from fastapi import FastAPI, HTTPException
+app = FastAPI(title="Sentinel race-condition target")
+DB_FILE = Path(os.getenv("SENTINEL_DB_PATH", "/tmp/tickets.db"))
+BOOKING_LOCK = asyncio.Lock()
+def init_db() -> None:
+    DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DB_FILE) as connection:
+        connection.execute("CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY, stock INTEGER NOT NULL)")
+        connection.execute("INSERT OR REPLACE INTO inventory (id, stock) VALUES (1, 1)")
+@app.on_event("startup")
+def initialise() -> None: init_db()
+@app.get("/health")
+async def health() -> dict[str, str]: return {"status": "ready"}
+@app.post("/book")
+async def book_ticket() -> dict[str, int | str]:
+    async with BOOKING_LOCK:
+        with sqlite3.connect(DB_FILE, timeout=1) as connection:
+            stock = connection.execute("SELECT stock FROM inventory WHERE id = 1").fetchone()[0]
+            if stock <= 0: raise HTTPException(status_code=400, detail="Sold out")
+            connection.execute("UPDATE inventory SET stock = ? WHERE id = 1", (stock - 1,))
+            return {"status": "success", "remaining_stock": stock - 1}
+'''
+    if kind == "memory_leak":
+        return '''from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+app = FastAPI(title="Sentinel memory-pressure target")
+@app.get("/health")
+async def health() -> dict[str, str]: return {"status": "ready"}
+@app.get("/export")
+async def export_data(size_mb: int = 1):
+    async def stream():
+        for _ in range(size_mb): yield b"x" * (1024 * 1024)
+    return StreamingResponse(stream(), media_type="application/octet-stream")
+'''
+    return '''import re
+from fastapi import FastAPI, HTTPException
+app = FastAPI(title="Sentinel ReDoS target")
+SAFE_INPUT = re.compile(r"^[A-Za-z0-9 ]+$")
+@app.get("/health")
+async def health() -> dict[str, str]: return {"status": "ready"}
+@app.post("/validate")
+async def validate_input(payload: dict[str, str]) -> dict[str, str]:
+    if not SAFE_INPUT.fullmatch(payload.get("text", "")): raise HTTPException(status_code=400, detail="Invalid format")
+    return {"status": "valid"}
 '''
 
 
-def deterministic_patch() -> PatchPlan:
-    return PatchPlan(
-        title="Serialize ticket inventory mutation",
-        rationale="Protect the check-and-decrement operation with one async lock per service instance.",
-        file_path="domain.py",
-        patched_source_b64=_encode(_fixed_domain_source()),
-    )
+def deterministic_patch(target: Path) -> PatchPlan:
+    kind = _kind(target)
+    return PatchPlan(title=f"Remediate {kind.replace('_', ' ')}", rationale="Replace the unsafe operation with a bounded or serialized implementation.", patched_source_b64=_encode(_fixed_source(kind)), verification_note="Sentinel reruns the same Docker chaos probe after this commit.")
 
 
 @retry(**_RETRY)
-def _openai_patch(graph: KnowledgeGraph, result: SandboxResult, target: Path) -> PatchPlan:
+def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
     from openai import OpenAI
-
     client = OpenAI(timeout=120.0, max_retries=0)
-    response = client.responses.parse(
-        model=MODEL,
-        input=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a defensive remediation agent. Return a complete replacement for the "
-                    "specified local domain.py only as base64. Preserve public API and fix the reported "
-                    "concurrency invariant. Do not modify unrelated files."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Target: {target}\nGraph: {graph.model_dump_json()}\n"
-                    f"Sandbox: {result.model_dump_json()}"
-                ),
-            },
-        ],
-        text_format=PatchPlan,
-    )
-    patch = response.output_parsed
-    if patch is None or patch.file_path != "domain.py":
-        raise RuntimeError("Rejected unsafe or empty patch")
-    return patch
+    response = client.responses.parse(model=MODEL, input=[{"role": "system", "content": "You are a defensive remediation agent. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. Preserve the target API and address the observed telemetry/failure."}, {"role": "user", "content": _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}"}], text_format=PatchPlan)
+    if response.output_parsed is None or response.output_parsed.file_path != "main.py":
+        raise RuntimeError("Unsafe or missing patch response")
+    return response.output_parsed
 
 
-def generate_patch(graph: KnowledgeGraph, result: SandboxResult, target: Path) -> PatchPlan:
+def generate_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
     if not os.getenv("OPENAI_API_KEY"):
-        return deterministic_patch()
+        return deterministic_patch(target)
     try:
-        return _openai_patch(graph, result, target)
+        return _openai_patch(target, graph, result)
     except Exception:
-        return deterministic_patch()
+        return deterministic_patch(target)

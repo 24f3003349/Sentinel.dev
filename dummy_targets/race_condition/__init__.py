@@ -1,0 +1,1 @@
+"""SQLite race-condition scenario."""
