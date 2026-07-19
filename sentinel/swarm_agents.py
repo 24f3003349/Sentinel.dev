@@ -113,11 +113,11 @@ def _fixed_source(kind: str) -> str:
     if kind == "race_condition":
         return '''import os
 import sqlite3
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 
-app = FastAPI(title="Sentinel race-condition target")
 DB_FILE = Path(os.getenv("SENTINEL_DB_PATH", "/tmp/tickets.db"))
 
 
@@ -128,9 +128,13 @@ def init_db() -> None:
         connection.execute("INSERT OR REPLACE INTO inventory (id, stock) VALUES (1, 1)")
 
 
-@app.on_event("startup")
-def initialise() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI):
     init_db()
+    yield
+
+
+app = FastAPI(title="Sentinel race-condition target", lifespan=lifespan)
 
 
 @app.get("/health")
