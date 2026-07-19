@@ -1,0 +1,18 @@
+name: Sentinel chaos gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  survivability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest
+      # A non-zero Sentinel result is intentionally a failed CI check. The demo
+      # invokes this command locally to produce a branch-scoped patch instead.
+      - run: python -m sentinel.cli attack dummy_target --no-patch
