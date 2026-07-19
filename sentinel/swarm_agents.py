@@ -13,6 +13,10 @@ MODEL = os.getenv("SENTINEL_OPENAI_MODEL", "gpt-5.6-sol")
 _RETRY = dict(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(Exception), reraise=True)
 
 
+def _require_live_ai() -> bool:
+    return os.getenv("SENTINEL_REQUIRE_LIVE_AI", "").lower() in {"1", "true", "yes"}
+
+
 def _encode(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
@@ -79,7 +83,7 @@ asyncio.run(main())
 ''', "REDOS_TIMEOUT_VIOLATION", "Catastrophic-regex timeout probe"
     else:
         raise ValueError(f"Unsupported Sentinel target: {target}")
-    return ChaosPlan(title=title, rationale="A concurrent or constrained production-shaped request exposes a happy-path blind spot.", attack_code_b64=_encode(code), expected_signal=signal, risk_level=risk_level)
+    return ChaosPlan(title=title, rationale="A concurrent or constrained production-shaped request exposes a happy-path blind spot.", attack_code_b64=_encode(code), expected_signal=signal, risk_level=risk_level, generator="deterministic-demo")
 
 
 @retry(**_RETRY)
@@ -89,45 +93,61 @@ def _openai_chaos(target: Path, graph: KnowledgeGraph, risk_level: int) -> Chaos
     response = client.responses.parse(model=MODEL, input=[{"role": "system", "content": "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python HTTP probe for the supplied FastAPI target. No filesystem writes, subprocesses, external network, or secret access. Return executable code only as base64 in attack_code_b64."}, {"role": "user", "content": _context(target, graph) + f"\nDEFCON: {risk_level}"}], text_format=ChaosPlan)
     if response.output_parsed is None:
         raise RuntimeError("No structured chaos plan returned")
-    return response.output_parsed
+    return response.output_parsed.model_copy(update={"generator": f"openai:{MODEL}"})
 
 
 def generate_chaos_plan(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
     if not os.getenv("OPENAI_API_KEY"):
+        if _require_live_ai():
+            raise RuntimeError("SENTINEL_REQUIRE_LIVE_AI is set but OPENAI_API_KEY is missing.")
         return deterministic_chaos_plan(target, risk_level)
     try:
         return _openai_chaos(target, graph, risk_level)
     except Exception:
-        return deterministic_chaos_plan(target, risk_level)
+        if _require_live_ai():
+            raise
+        return deterministic_chaos_plan(target, risk_level).model_copy(update={"generator": "deterministic-fallback-after-openai-error"})
 
 
 def _fixed_source(kind: str) -> str:
     if kind == "race_condition":
-        return '''import asyncio
-import os
+        return '''import os
 import sqlite3
 from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
+
 app = FastAPI(title="Sentinel race-condition target")
 DB_FILE = Path(os.getenv("SENTINEL_DB_PATH", "/tmp/tickets.db"))
-BOOKING_LOCK = asyncio.Lock()
+
+
 def init_db() -> None:
     DB_FILE.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_FILE) as connection:
         connection.execute("CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY, stock INTEGER NOT NULL)")
         connection.execute("INSERT OR REPLACE INTO inventory (id, stock) VALUES (1, 1)")
+
+
 @app.on_event("startup")
-def initialise() -> None: init_db()
+def initialise() -> None:
+    init_db()
+
+
 @app.get("/health")
-async def health() -> dict[str, str]: return {"status": "ready"}
+async def health() -> dict[str, str]:
+    return {"status": "ready"}
+
+
 @app.post("/book")
 async def book_ticket() -> dict[str, int | str]:
-    async with BOOKING_LOCK:
-        with sqlite3.connect(DB_FILE, timeout=1) as connection:
-            stock = connection.execute("SELECT stock FROM inventory WHERE id = 1").fetchone()[0]
-            if stock <= 0: raise HTTPException(status_code=400, detail="Sold out")
-            connection.execute("UPDATE inventory SET stock = ? WHERE id = 1", (stock - 1,))
-            return {"status": "success", "remaining_stock": stock - 1}
+    with sqlite3.connect(DB_FILE, timeout=1) as connection:
+        cursor = connection.execute(
+            "UPDATE inventory SET stock = stock - 1 WHERE id = 1 AND stock > 0"
+        )
+        if cursor.rowcount != 1:
+            raise HTTPException(status_code=400, detail="Sold out")
+        remaining = connection.execute("SELECT stock FROM inventory WHERE id = 1").fetchone()[0]
+        return {"status": "success", "remaining_stock": remaining}
 '''
     if kind == "memory_leak":
         return '''from fastapi import FastAPI
@@ -156,7 +176,7 @@ async def validate_input(payload: dict[str, str]) -> dict[str, str]:
 
 def deterministic_patch(target: Path) -> PatchPlan:
     kind = _kind(target)
-    return PatchPlan(title=f"Remediate {kind.replace('_', ' ')}", rationale="Replace the unsafe operation with a bounded or serialized implementation.", patched_source_b64=_encode(_fixed_source(kind)), verification_note="Sentinel reruns the same Docker chaos probe after this commit.")
+    return PatchPlan(title=f"Remediate {kind.replace('_', ' ')}", rationale="Replace the unsafe operation with a bounded or atomic implementation.", patched_source_b64=_encode(_fixed_source(kind)), verification_note="Sentinel reruns the same Docker chaos probe after this commit.", generator="deterministic-demo")
 
 
 @retry(**_RETRY)
@@ -166,13 +186,17 @@ def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) ->
     response = client.responses.parse(model=MODEL, input=[{"role": "system", "content": "You are a defensive remediation agent. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. Preserve the target API and address the observed telemetry/failure."}, {"role": "user", "content": _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}"}], text_format=PatchPlan)
     if response.output_parsed is None or response.output_parsed.file_path != "main.py":
         raise RuntimeError("Unsafe or missing patch response")
-    return response.output_parsed
+    return response.output_parsed.model_copy(update={"generator": f"openai:{MODEL}"})
 
 
 def generate_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
     if not os.getenv("OPENAI_API_KEY"):
+        if _require_live_ai():
+            raise RuntimeError("SENTINEL_REQUIRE_LIVE_AI is set but OPENAI_API_KEY is missing.")
         return deterministic_patch(target)
     try:
         return _openai_patch(target, graph, result)
     except Exception:
-        return deterministic_patch(target)
+        if _require_live_ai():
+            raise
+        return deterministic_patch(target).model_copy(update={"generator": "deterministic-fallback-after-openai-error"})

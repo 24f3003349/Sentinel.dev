@@ -19,6 +19,20 @@ uv sync --all-extras
 uv run python run_sentinel_demo.py
 ```
 
+This is a complete, offline-capable demonstration: it uses a deliberately vulnerable FastAPI service, maps it with Graphify, attacks it over real localhost HTTP inside Docker, commits a remediation branch, and repeats the identical attack. The terminal explicitly labels whether its plan and patch came from `deterministic-demo` or from OpenAI.
+
+### Live GPT-5.6 Sol demonstration
+
+API billing is separate from a ChatGPT/Codex subscription. If your OpenAI Platform organization has API credit, create an API key there and set it only in your own terminal (never commit it):
+
+```powershell
+$env:OPENAI_API_KEY = "your_api_key"
+$env:SENTINEL_REQUIRE_LIVE_AI = "1"
+uv run python run_sentinel_demo.py
+```
+
+`SENTINEL_REQUIRE_LIVE_AI=1` is deliberate: it refuses the deterministic fallback, so the terminal proves that GPT-5.6 Sol produced the chaos plan and remediation. Without an API key, the deterministic demo remains fully functional and visibly labelled as such.
+
 The one-click demo maps the target with Graphify, builds an isolated Docker image without host volume mounts, sends a concurrent HTTP attack to the FastAPI service, captures CPU/RAM telemetry, creates a Git branch and commit, and verifies that the patched branch survives the identical attack.
 
 Run every baseline test:

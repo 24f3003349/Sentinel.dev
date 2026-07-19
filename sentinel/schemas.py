@@ -40,6 +40,7 @@ class ChaosPlan(BaseModel):
     attack_code_b64: str
     expected_signal: str
     risk_level: int = Field(ge=1, le=5)
+    generator: str = "deterministic-demo"
 
 
 class TelemetrySample(BaseModel):
@@ -66,6 +67,7 @@ class PatchPlan(BaseModel):
     patched_source_b64: str
     verification_note: str
     branch_name: str = "sentinel/fix"
+    generator: str = "deterministic-demo"
 
 
 class GitPatchResult(BaseModel):

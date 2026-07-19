@@ -36,6 +36,7 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
     console.print(f"[cyan][MAP][/cyan] Graphify mapped {len(graph.nodes)} nodes and {len(graph.edges)} edges.")
     chaos = generate_chaos_plan(target, graph, defcon)
     console.print(f"[magenta][CHAOS][/magenta] {chaos.title}")
+    console.print(f"[dim][AGENT][/dim] chaos plan: {chaos.generator}")
     result = run_attack(target, decode_code(chaos.attack_code_b64))
     color = "green" if result.status == RunStatus.passed else "red"
     console.print(f"[{color}][ARENA] {result.status.value.upper()}[/] via {result.runner}")
@@ -47,7 +48,9 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
     if result.status in {RunStatus.failed, RunStatus.timed_out} and patch:
         console.print("[bright_green][HEAL][/bright_green] creating a review branch and patch ...")
         remediation = generate_patch(target, graph, result)
+        console.print(f"[dim][AGENT][/dim] remediation: {remediation.generator}")
         git_result = apply_patch_on_branch(ROOT, target, remediation)
+        console.print(Panel(git_result.diff, title="Applied remediation diff", border_style="cyan"))
         verification = run_attack(target, decode_code(chaos.attack_code_b64))
         report.patch, report.git, report.verification = remediation, git_result, verification
         if verification.status == RunStatus.passed:
