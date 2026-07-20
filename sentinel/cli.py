@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -93,14 +96,37 @@ def doctor() -> None:
     console.print(table)
 
 
-def run_demo() -> int:
-    try:
-        import os
+def _run_happy_path_tests(target: Path) -> bool:
+    """Prove the seeded service passes ordinary local tests before chaos starts."""
+    console.print("[cyan][LOCAL TESTS][/cyan] running the target happy-path suite ...")
+    completed = subprocess.run([sys.executable, "-m", "pytest", str(target / "test_main.py"), "-q"], cwd=ROOT, capture_output=True, text=True, check=False)
+    if completed.returncode == 0:
+        summary = (completed.stdout or "passed").strip().splitlines()[-1]
+        console.print(f"[green][LOCAL TESTS] PASS[/green] {summary}")
+        return True
+    output = f"{completed.stdout}\n{completed.stderr}".strip()
+    console.print(Panel(output or "pytest failed without output", title="Local tests failed", border_style="red"))
+    return False
 
-        if os.getenv("SENTINEL_REQUIRE_LIVE_AI", "").lower() in {"1", "true", "yes"} and not live_api_key():
+
+def run_demo(mode: str = "live") -> int:
+    try:
+        if mode not in {"live", "deterministic"}:
+            console.print("[bold red]Invalid demo mode.[/] Choose live or deterministic.")
+            return 2
+        os.environ["SENTINEL_DEMO_MODE"] = mode
+        if mode == "deterministic":
+            os.environ.pop("SENTINEL_REQUIRE_LIVE_AI", None)
+            console.print("[yellow][DEMO MODE] DETERMINISTIC[/yellow] No model call; this is a local rehearsal.")
+        else:
+            os.environ["SENTINEL_REQUIRE_LIVE_AI"] = "1"
+            console.print(f"[bright_cyan][DEMO MODE] LIVE[/bright_cyan] GPT agent: {live_generator_label()}")
+        if mode == "live" and not live_api_key():
             key_name = "OPENROUTER_API_KEY" if live_provider() == "openrouter" else "OPENAI_API_KEY"
             console.print(f"[bold red]LIVE GPT-5.6 SOL REQUIRED:[/] Set {key_name}. Sentinel will not substitute the deterministic demo path.")
             return 2
+        if not _run_happy_path_tests(DEFAULT_TARGET):
+            return 1
         report = _execute(DEFAULT_TARGET, defcon=5, patch=True)
         final = report.verification or report.sandbox
         return 0 if final.status == RunStatus.passed else 1

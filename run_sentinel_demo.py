@@ -1,12 +1,10 @@
-"""One-click Sentinel demonstration that requires live GPT-5.6 Sol."""
-import os
+"""One-click Sentinel demo with explicit live and deterministic modes."""
+import argparse
 
 from sentinel.cli import run_demo
 
 
 if __name__ == "__main__":
-    # The hackathon entry point must demonstrate the real model. The offline
-    # deterministic path remains available only for local engineering checks.
-    if os.getenv("SENTINEL_OFFLINE_DEMO", "").lower() not in {"1", "true", "yes"}:
-        os.environ["SENTINEL_REQUIRE_LIVE_AI"] = "1"
-    raise SystemExit(run_demo())
+    parser = argparse.ArgumentParser(description="Run the Sentinel.dev production-failure demo.")
+    parser.add_argument("--mode", choices=("live", "deterministic"), default="live", help="live calls GPT-5.6; deterministic is a no-key local rehearsal.")
+    raise SystemExit(run_demo(parser.parse_args().mode))

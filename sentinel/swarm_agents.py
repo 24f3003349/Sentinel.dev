@@ -16,6 +16,10 @@ def _require_live_ai() -> bool:
     return os.getenv("SENTINEL_REQUIRE_LIVE_AI", "").lower() in {"1", "true", "yes"}
 
 
+def _force_deterministic() -> bool:
+    return os.getenv("SENTINEL_DEMO_MODE", "").lower() == "deterministic"
+
+
 def live_provider() -> str:
     provider = os.getenv("SENTINEL_LLM_PROVIDER", "openai").strip().lower()
     if provider not in {"openai", "openrouter"}:
@@ -138,6 +142,8 @@ def _openai_chaos(target: Path, graph: KnowledgeGraph, risk_level: int) -> Chaos
 
 
 def generate_chaos_plan(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
+    if _force_deterministic():
+        return deterministic_chaos_plan(target, risk_level)
     if not live_api_key():
         if _require_live_ai():
             raise RuntimeError(f"SENTINEL_REQUIRE_LIVE_AI is set but {live_provider()} API access is missing.")
@@ -234,6 +240,8 @@ def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) ->
 
 
 def generate_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
+    if _force_deterministic():
+        return deterministic_patch(target)
     if not live_api_key():
         if _require_live_ai():
             raise RuntimeError(f"SENTINEL_REQUIRE_LIVE_AI is set but {live_provider()} API access is missing.")
