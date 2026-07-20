@@ -1,72 +1,56 @@
+![Sentinel.dev — Graphify-guided chaos testing](assets/sentinel-readme-banner.png)
+
 # Sentinel.dev
 
-Sentinel.dev is a Graphify-guided chaos-testing gate for AI-assisted software delivery. It proves that ordinary happy-path tests can pass while a production-shaped HTTP attack exposes a concurrency, memory, or CPU failure; it then creates a review branch, patches the target, and reruns the same probe to verify the repair.
+**Graphify-guided chaos testing that finds a production-shaped failure, asks GPT‑5.6 Sol for a repair, and proves the repair in Docker.**
 
-## Included production-shaped targets
+## What the demo proves
 
-| Target | Happy-path test | Sentinel proof | Remediation |
-| --- | --- | --- | --- |
-| `race_condition` | one ticket checkout succeeds | concurrent HTTP requests oversell SQLite inventory | async booking lock |
-| `memory_leak` | 1 MiB export succeeds | 384 MiB export crosses the 256 MiB arena policy | streaming response |
-| `redos_attack` | ordinary input validates | catastrophic regex payload stalls the service | linear-time allow-list validation |
+1. **Graphify maps the target** and identifies the blast radius.
+2. **GPT‑5.6 Sol generates** a bounded localhost attack and a `main.py` remediation.
+3. **Docker runs the real HTTP attack** against an intentionally vulnerable FastAPI target.
+4. Sentinel creates a review branch, applies the patch, then **reruns the identical probe**.
 
-## One-click judge sandbox
+The terminal ends only when it can show both:
 
-Requirements: Docker Desktop, Python 3.12+, and [uv](https://docs.astral.sh/uv/). Graphify is required and installed as a project dependency. OpenAI is optional for the deterministic demo; with `OPENAI_API_KEY`, GPT-5.6 Sol produces structured, Base64-encoded probes and patches.
+```text
+[AGENT] chaos plan: openai:gpt-5.6-sol
+[AGENT] remediation: openai:gpt-5.6-sol
+VERIFIED
+```
+
+## Run the live demo
+
+Requirements: Docker Desktop, Python 3.12+, [uv](https://docs.astral.sh/uv/), and an **OpenAI Platform API key with API billing**. ChatGPT/Codex plan credits do not power API calls.
 
 ```powershell
-uv sync --all-extras
+cd Sentinel.dev
+uv sync --all-extras --frozen
+$env:OPENAI_API_KEY = "your_platform_api_key"
 uv run python run_sentinel_demo.py
 ```
 
-This is the hackathon entry point. It requires a live GPT-5.6 Sol call: it maps a deliberately vulnerable FastAPI service with Graphify, asks GPT-5.6 Sol for the attack and remediation, attacks over real localhost HTTP inside Docker, commits a remediation branch, and repeats the identical attack. It fails loudly if live API access is missing; it never silently substitutes a deterministic plan.
+`run_sentinel_demo.py` requires live GPT‑5.6 Sol. It fails clearly if API access is missing; it never presents a deterministic fallback as an AI result.
 
-### Live GPT-5.6 Sol demonstration
+## Included targets
 
-API billing is separate from a ChatGPT/Codex subscription. If your OpenAI Platform organization has API credit, create an API key there and set it only in your own terminal (never commit it):
+| Target | Failure Sentinel exposes | Verified repair |
+| --- | --- | --- |
+| `race_condition` | Concurrent bookings oversell one SQLite ticket | Atomic conditional inventory update |
+| `memory_leak` | A large export breaches the 256 MiB arena policy | Streaming response |
+| `redos_attack` | Catastrophic regex input stalls validation | Linear-time allow-list validation |
 
-```powershell
-$env:OPENAI_API_KEY = "your_api_key"
-$env:SENTINEL_REQUIRE_LIVE_AI = "1"
-uv run python run_sentinel_demo.py
-```
-
-`run_sentinel_demo.py` enforces `SENTINEL_REQUIRE_LIVE_AI=1` automatically. The terminal must show `openai:gpt-5.6-sol` for both the chaos plan and remediation; otherwise the run is not valid as a live-AI demo.
-
-For local engineering checks only, not for a hackathon presentation, use the deterministic path explicitly:
-
-```powershell
-$env:SENTINEL_OFFLINE_DEMO = "1"
-uv run python run_sentinel_demo.py
-```
-
-The one-click demo maps the target with Graphify, builds an isolated Docker image without host volume mounts, sends a concurrent HTTP attack to the FastAPI service, captures CPU/RAM telemetry, creates a Git branch and commit, and verifies that the patched branch survives the identical attack.
-
-Run every baseline test:
-
-```powershell
-uv run pytest
-```
-
-Run a detection-only CI gate; a vulnerability intentionally returns exit code `1`:
+Run a detection-only CI gate with:
 
 ```powershell
 uv run python -m sentinel.cli attack dummy_targets/race_condition --no-patch
-uv run python -m sentinel.cli attack dummy_targets/memory_leak --no-patch
-uv run python -m sentinel.cli attack dummy_targets/redos_attack --no-patch
 ```
 
-## Safety model
+An intentional finding exits with code `1`, so it can fail CI.
 
-Every arena is a throwaway `python:3.12-slim` image built from a temporary context. It has no host volume mount, no network, a read-only root filesystem, a writable in-memory `/tmp`, one CPU, 256 MiB memory, 64 PIDs, no-new-privileges, and a 10-second hard execution deadline. Docker telemetry is evaluated against memory and sustained-CPU policies; attack scripts only address `127.0.0.1` inside the container.
+## Safety and observability
 
-## Graphify and AI workflow
-
-Graphify is the required structural map. Sentinel invokes `graphify extract --code-only --no-cluster` and passes the resulting scoped node-link graph plus the target source to the agent. The OpenAI path uses Responses structured parsing, Pydantic models, Base64 code transport, 120-second client timeouts, and three exponential-backoff attempts. If no key is configured, target-specific deterministic probes preserve a fully repeatable judge demo.
-
-## Git and GitHub lifecycle
-
-Sentinel never overwrites `main`. It refuses a dirty tracked workspace, creates a unique `sentinel/fix-*` branch, commits the patch, and reruns verification. With a GitHub `origin` and `GITHUB_TOKEN`, it pushes that branch and uses the GitHub API to create an actual PR. No token is stored in the repository.
+The arena uses a throwaway `python:3.12-slim` image: no host volume mounts, no external network, read-only root filesystem, in-memory `/tmp`, 1 CPU, 256 MiB RAM, 64 PIDs, and a 10-second hard timeout. Reports stay local in `reports/latest.json`.
 
 ## Dashboard
 
@@ -76,8 +60,8 @@ npm ci
 npm run dev
 ```
 
-The Next.js War Room polls `/api/report`, which reads `reports/latest.json` locally (or `SENTINEL_REPORT_PATH`). It renders Graphify nodes through React Flow, records Docker telemetry, and streams arena output through xterm.
+Open `http://localhost:3000` after a Sentinel run to inspect the Graphify blast-radius graph, Docker telemetry, terminal logs, finding, and verification result.
 
 ## Where Codex Accelerated Our Workflow
 
-Codex accelerated the repeatable systems work: Graphify orchestration, container hardening, test-target scaffolding, structured agent contracts, branch/PR automation, and the report-driven dashboard. The product decision remains deliberate: Sentinel validates survivability rather than generating another happy-path test.
+Codex accelerated the Graphify orchestration, hardened Docker arena, structured GPT‑5.6 contracts, report-driven dashboard, and repeatable verification workflow.
