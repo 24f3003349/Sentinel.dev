@@ -24,10 +24,10 @@ DEFAULT_TARGET = ROOT / "dummy_targets" / "race_condition"
 FOCUS = {"race_condition": "book", "memory_leak": "export", "redos_attack": "validate"}
 
 
-def _report_path() -> Path:
+def _report_path(target_name: str | None = None) -> Path:
     directory = ROOT / "reports"
     directory.mkdir(exist_ok=True)
-    return directory / "latest.json"
+    return directory / (f"{target_name}.json" if target_name else "latest.json")
 
 
 def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
@@ -60,7 +60,9 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
             console.print(f"[bright_green]VERIFIED[/bright_green] {git_result.branch} ({git_result.commit[:8]}) survives the same probe.")
         else:
             console.print("[bold red]PATCH UNVERIFIED[/bold red] Review the branch; Sentinel will not claim remediation.")
-    _report_path().write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    serialized = report.model_dump_json(indent=2)
+    _report_path().write_text(serialized, encoding="utf-8")
+    _report_path(target.name).write_text(serialized, encoding="utf-8")
     return report
 
 

@@ -1,47 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { KnowledgeGraph } from "./components/KnowledgeGraph";
+import { KnowledgeGraph, type EvidenceGraph } from "./components/KnowledgeGraph";
 import { TerminalLog, type TerminalReport } from "./components/TerminalLog";
-import { projectFor, projects, type ProjectId } from "./data/projects";
+import { projectCatalog, type ProjectId } from "./data/projects";
 
-type Report = TerminalReport & { target?: string; status?: string; sandbox?: TerminalReport["sandbox"] & { telemetry?: { cpu_percent: number; memory_bytes: number }[] } };
+type Report = TerminalReport & { target?: string; graph?: EvidenceGraph; chaos?: TerminalReport["chaos"] & { risk_level?: number }; status?: string; sandbox?: TerminalReport["sandbox"] & { telemetry?: { cpu_percent: number; memory_bytes: number }[] } };
+type ReportsResponse = { reports: Record<string, Report> };
+const labelFor = (id: ProjectId) => projectCatalog.find((item) => item.id === id)?.label ?? id;
 
-const targetFrom = (report: Report | null): ProjectId => {
-  const target = report?.target ?? "";
-  if (target.includes("memory_leak")) return "memory_leak";
-  if (target.includes("redos_attack")) return "redos_attack";
-  return "race_condition";
-};
-
-function Metric({ label, value, detail, children }: Readonly<{ label: string; value: string; detail: string; children?: React.ReactNode }>) {
-  return <div className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small>{children}</div>;
-}
+function Metric({ label, value, detail, children }: Readonly<{ label: string; value: string; detail: string; children?: React.ReactNode }>) { return <div className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small>{children}</div>; }
 
 export default function Page() {
-  const [report, setReport] = useState<Report | null>(null);
-  const [selected, setSelected] = useState<ProjectId>("race_condition");
-  useEffect(() => {
-    const load = () => fetch("/api/report", { cache: "no-store" }).then((response) => response.json()).then((next: Report) => { setReport(next); setSelected(targetFrom(next)); }).catch(() => setReport(null));
-    load(); const timer = window.setInterval(load, 2500); return () => window.clearInterval(timer);
-  }, []);
-  const project = projectFor(selected);
-  const telemetry = report?.sandbox?.telemetry ?? [];
-  const memory = Math.max(0, ...telemetry.map((sample) => sample.memory_bytes)) / 1024 / 1024;
-  const cpu = Math.max(0, ...telemetry.map((sample) => sample.cpu_percent));
-  const state = report?.verification?.status ?? report?.sandbox?.status ?? report?.status ?? "waiting";
-  const isStable = state === "passed" || state === "waiting";
-  return <main className="war-room">
-    <header className="topbar"><p className="wordmark">SENTINEL.DEV <span>/</span> WAR ROOM</p><nav className="project-tabs" aria-label="Select a local target">{projects.map((item) => <button key={item.id} onClick={() => setSelected(item.id)} className={selected === item.id ? "active" : ""}><i />{item.label}</button>)}</nav><span className={`system-status ${isStable ? "stable" : "gated"}`}>{isStable ? "SYSTEM: STABLE" : "CI GATED"}</span></header>
-    <section className="hero"><div><p className="kicker">Deployment survivability / local code graph</p><h1>See the failure<br /><em>before production does.</em></h1></div><p className="hero-copy">Graphify maps the dependency surface. Sentinel then probes the boundary ordinary local tests leave behind.</p></section>
-    <section className="telemetry" aria-label="Arena telemetry">
-      <Metric label="Peak memory" value={`${memory.toFixed(1)} MiB`} detail={`${((memory / 256) * 100).toFixed(1)}% of 256 MiB arena`} />
-      <Metric label="CPU core load" value={`${cpu.toFixed(1)}%`} detail="10 sample capacity"><span className="micro-bars">{Array.from({ length: 10 }, (_, index) => <i key={index} className={index < Math.ceil(cpu / 10) ? "on" : ""} />)}</span></Metric>
-      <Metric label="DEFCON risk intensity" value="5 / 5" detail="bounded defensive probe" />
-      <Metric label="Active swarm probe" value={project.probe} detail="localhost only" />
-    </section>
-    <KnowledgeGraph project={project} />
-    <TerminalLog report={report} probe={project.probe} />
-    <footer><span>Graphify maps local source only.</span><span>Docker arena has no host mounts or external network.</span><span>Report refreshes every 2.5 seconds.</span></footer>
-  </main>;
+  const [reports, setReports] = useState<Record<string, Report>>({}); const [selected, setSelected] = useState<ProjectId>("race_condition");
+  useEffect(() => { const load = () => fetch("/api/reports", { cache: "no-store" }).then((response) => response.json()).then((payload: ReportsResponse) => { setReports(payload.reports); const first = projectCatalog.find((item) => payload.reports[item.id]); if (first) setSelected((current) => payload.reports[current] ? current : first.id); }).catch(() => setReports({})); load(); const timer = window.setInterval(load, 2500); return () => window.clearInterval(timer); }, []);
+  const report = reports[selected] ?? null; const telemetry = report?.sandbox?.telemetry ?? []; const memory = Math.max(0, ...telemetry.map((sample) => sample.memory_bytes)) / 1024 / 1024; const cpu = Math.max(0, ...telemetry.map((sample) => sample.cpu_percent)); const status = report?.verification?.status ?? report?.sandbox?.status ?? report?.status ?? "waiting"; const isStable = status === "passed";
+  const displayedTarget = labelFor(selected); const telemetryPresent = telemetry.length > 0;
+  return <main className="war-room"><header className="topbar"><p className="wordmark">SENTINEL.DEV <span>/</span> WAR ROOM</p><nav className="project-tabs" aria-label="Select report evidence">{projectCatalog.map((item) => { const available = Boolean(reports[item.id]); return <button key={item.id} disabled={!available} title={available ? "View recorded Sentinel evidence" : "No Sentinel report recorded yet"} onClick={() => setSelected(item.id)} className={selected === item.id ? "active" : ""}><i />{item.label}{!available && <em>no scan</em>}</button>; })}</nav><span className={`system-status ${isStable ? "stable" : "gated"}`}>{report ? (isStable ? "SYSTEM: STABLE" : "CI GATED") : "NO EVIDENCE"}</span></header><section className="hero"><div><p className="kicker">Deployment survivability / local code graph</p><h1>See the failure<br /><em>before production does.</em></h1></div><p className="hero-copy">Every value below is derived from the selected local Sentinel report. Unscanned targets remain unavailable.</p></section><section className="telemetry" aria-label="Recorded arena telemetry"><Metric label="Peak memory" value={telemetryPresent ? `${memory.toFixed(1)} MiB` : "—"} detail={telemetryPresent ? `${((memory / 256) * 100).toFixed(1)}% of 256 MiB arena` : "No sandbox telemetry"} /><Metric label="CPU core load" value={telemetryPresent ? `${cpu.toFixed(1)}%` : "—"} detail={telemetryPresent ? `${telemetry.length} samples captured` : "No sandbox telemetry"}><span className="micro-bars">{Array.from({ length: 10 }, (_, index) => <i key={index} className={telemetryPresent && index < Math.ceil(cpu / 10) ? "on" : ""} />)}</span></Metric><Metric label="DEFCON risk intensity" value={report?.chaos?.risk_level ? `${report.chaos.risk_level} / 5` : "—"} detail={report ? "Recorded chaos plan" : "No chaos plan"} /><Metric label="Active swarm probe" value={report?.chaos?.title ?? "—"} detail={report ? "Recorded local probe" : "No Sentinel report"} /></section><KnowledgeGraph graph={report?.graph} targetLabel={displayedTarget} /><TerminalLog report={report} probe={report?.chaos?.title ?? "No recorded probe"} /><footer><span>Graph and blast radius come from Graphify report output.</span><span>Metrics come from Docker telemetry only when samples exist.</span><span>Reports refresh every 2.5 seconds.</span></footer></main>;
 }
