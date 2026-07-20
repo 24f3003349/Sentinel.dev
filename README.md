@@ -14,10 +14,12 @@
 The terminal ends only when it can show both:
 
 ```text
-[AGENT] chaos plan: openai:gpt-5.6-sol
-[AGENT] remediation: openai:gpt-5.6-sol
+[AGENT] chaos plan: openrouter:openai/gpt-5.6-sol
+[AGENT] remediation: openrouter:openai/gpt-5.6-sol
 VERIFIED
 ```
+
+Direct OpenAI runs show `openai:gpt-5.6-sol` instead.
 
 ## Run the live demo
 
