@@ -9,12 +9,54 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from sentinel.schemas import ChaosPlan, KnowledgeGraph, PatchPlan, SandboxResult
 
-MODEL = os.getenv("SENTINEL_OPENAI_MODEL", "gpt-5.6-sol")
 _RETRY = dict(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(Exception), reraise=True)
 
 
 def _require_live_ai() -> bool:
     return os.getenv("SENTINEL_REQUIRE_LIVE_AI", "").lower() in {"1", "true", "yes"}
+
+
+def live_provider() -> str:
+    provider = os.getenv("SENTINEL_LLM_PROVIDER", "openai").strip().lower()
+    if provider not in {"openai", "openrouter"}:
+        raise RuntimeError("SENTINEL_LLM_PROVIDER must be 'openai' or 'openrouter'.")
+    return provider
+
+
+def live_model() -> str:
+    configured = os.getenv("SENTINEL_LLM_MODEL") or os.getenv("SENTINEL_OPENAI_MODEL")
+    if configured:
+        return configured
+    return "openai/gpt-5.6-sol" if live_provider() == "openrouter" else "gpt-5.6-sol"
+
+
+def live_api_key() -> str | None:
+    return os.getenv("OPENROUTER_API_KEY") if live_provider() == "openrouter" else os.getenv("OPENAI_API_KEY")
+
+
+def live_generator_label() -> str:
+    return f"{live_provider()}:{live_model()}"
+
+
+def _client():
+    from openai import OpenAI
+
+    provider = live_provider()
+    key = live_api_key()
+    if not key:
+        raise RuntimeError(f"{provider} API key is missing.")
+    if provider == "openrouter":
+        return OpenAI(
+            api_key=key,
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": os.getenv("SENTINEL_APP_URL", "https://github.com/24f3003349/Sentinel.dev"),
+                "X-OpenRouter-Title": "Sentinel.dev",
+            },
+            timeout=120.0,
+            max_retries=0,
+        )
+    return OpenAI(api_key=key, timeout=120.0, max_retries=0)
 
 
 def _encode(value: str) -> str:
@@ -88,18 +130,17 @@ asyncio.run(main())
 
 @retry(**_RETRY)
 def _openai_chaos(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
-    from openai import OpenAI
-    client = OpenAI(timeout=120.0, max_retries=0)
-    response = client.responses.parse(model=MODEL, input=[{"role": "system", "content": "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python HTTP probe for the supplied FastAPI target. No filesystem writes, subprocesses, external network, or secret access. Return executable code only as base64 in attack_code_b64."}, {"role": "user", "content": _context(target, graph) + f"\nDEFCON: {risk_level}"}], text_format=ChaosPlan)
+    client = _client()
+    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python HTTP probe for the supplied FastAPI target. No filesystem writes, subprocesses, external network, or secret access. Return executable code only as base64 in attack_code_b64."}, {"role": "user", "content": _context(target, graph) + f"\nDEFCON: {risk_level}"}], text_format=ChaosPlan)
     if response.output_parsed is None:
         raise RuntimeError("No structured chaos plan returned")
-    return response.output_parsed.model_copy(update={"generator": f"openai:{MODEL}"})
+    return response.output_parsed.model_copy(update={"generator": live_generator_label()})
 
 
 def generate_chaos_plan(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
-    if not os.getenv("OPENAI_API_KEY"):
+    if not live_api_key():
         if _require_live_ai():
-            raise RuntimeError("SENTINEL_REQUIRE_LIVE_AI is set but OPENAI_API_KEY is missing.")
+            raise RuntimeError(f"SENTINEL_REQUIRE_LIVE_AI is set but {live_provider()} API access is missing.")
         return deterministic_chaos_plan(target, risk_level)
     try:
         return _openai_chaos(target, graph, risk_level)
@@ -185,18 +226,17 @@ def deterministic_patch(target: Path) -> PatchPlan:
 
 @retry(**_RETRY)
 def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
-    from openai import OpenAI
-    client = OpenAI(timeout=120.0, max_retries=0)
-    response = client.responses.parse(model=MODEL, input=[{"role": "system", "content": "You are a defensive remediation agent. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. Preserve the target API and address the observed telemetry/failure."}, {"role": "user", "content": _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}"}], text_format=PatchPlan)
+    client = _client()
+    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": "You are a defensive remediation agent. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. Preserve the target API and address the observed telemetry/failure."}, {"role": "user", "content": _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}"}], text_format=PatchPlan)
     if response.output_parsed is None or response.output_parsed.file_path != "main.py":
         raise RuntimeError("Unsafe or missing patch response")
-    return response.output_parsed.model_copy(update={"generator": f"openai:{MODEL}"})
+    return response.output_parsed.model_copy(update={"generator": live_generator_label()})
 
 
 def generate_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
-    if not os.getenv("OPENAI_API_KEY"):
+    if not live_api_key():
         if _require_live_ai():
-            raise RuntimeError("SENTINEL_REQUIRE_LIVE_AI is set but OPENAI_API_KEY is missing.")
+            raise RuntimeError(f"SENTINEL_REQUIRE_LIVE_AI is set but {live_provider()} API access is missing.")
         return deterministic_patch(target)
     try:
         return _openai_patch(target, graph, result)

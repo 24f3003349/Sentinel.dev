@@ -12,7 +12,7 @@ from sentinel.gitops import apply_patch_on_branch
 from sentinel.graph_memory import build_graph
 from sentinel.sandbox import docker_available, run_attack
 from sentinel.schemas import RunStatus, SentinelReport
-from sentinel.swarm_agents import decode_code, generate_chaos_plan, generate_patch
+from sentinel.swarm_agents import decode_code, generate_chaos_plan, generate_patch, live_api_key, live_generator_label, live_provider
 
 app = typer.Typer(help="Sentinel.dev - Graphify-guided chaos testing and verified remediation.", no_args_is_help=True)
 console = Console()
@@ -89,7 +89,7 @@ def doctor() -> None:
     except ModuleNotFoundError:
         graphify = "[red]missing[/red]"
     table.add_row("Graphify", graphify)
-    table.add_row("OpenAI", "[green]configured[/green]" if __import__("os").getenv("OPENAI_API_KEY") else "[yellow]target-specific deterministic mode[/yellow]")
+    table.add_row("LLM", f"[green]configured ({live_generator_label()})[/green]" if live_api_key() else "[yellow]not configured[/yellow]")
     console.print(table)
 
 
@@ -97,8 +97,9 @@ def run_demo() -> int:
     try:
         import os
 
-        if os.getenv("SENTINEL_REQUIRE_LIVE_AI", "").lower() in {"1", "true", "yes"} and not os.getenv("OPENAI_API_KEY"):
-            console.print("[bold red]LIVE GPT-5.6 SOL REQUIRED:[/] Set OPENAI_API_KEY with OpenAI Platform API billing. Sentinel will not substitute the deterministic demo path.")
+        if os.getenv("SENTINEL_REQUIRE_LIVE_AI", "").lower() in {"1", "true", "yes"} and not live_api_key():
+            key_name = "OPENROUTER_API_KEY" if live_provider() == "openrouter" else "OPENAI_API_KEY"
+            console.print(f"[bold red]LIVE GPT-5.6 SOL REQUIRED:[/] Set {key_name}. Sentinel will not substitute the deterministic demo path.")
             return 2
         report = _execute(DEFAULT_TARGET, defcon=5, patch=True)
         final = report.verification or report.sandbox

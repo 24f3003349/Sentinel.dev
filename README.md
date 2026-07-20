@@ -21,16 +21,18 @@ VERIFIED
 
 ## Run the live demo
 
-Requirements: Docker Desktop, Python 3.12+, [uv](https://docs.astral.sh/uv/), and an **OpenAI Platform API key with API billing**. ChatGPT/Codex plan credits do not power API calls.
+Requirements: Docker Desktop, Python 3.12+, [uv](https://docs.astral.sh/uv/), and live API access. Use either OpenAI Platform or OpenRouter. ChatGPT/Codex plan credits do not power API calls.
 
 ```powershell
 cd Sentinel.dev
 uv sync --all-extras --frozen
-$env:OPENAI_API_KEY = "your_platform_api_key"
+$env:SENTINEL_LLM_PROVIDER = "openrouter"
+$env:OPENROUTER_API_KEY = "your_openrouter_api_key"
+$env:SENTINEL_LLM_MODEL = "openai/gpt-5.6-sol"
 uv run python run_sentinel_demo.py
 ```
 
-`run_sentinel_demo.py` requires live GPT‑5.6 Sol. It fails clearly if API access is missing; it never presents a deterministic fallback as an AI result.
+For direct OpenAI Platform access, set `SENTINEL_LLM_PROVIDER=openai`, `OPENAI_API_KEY`, and optionally `SENTINEL_LLM_MODEL=gpt-5.6-sol`. `run_sentinel_demo.py` requires live GPT‑5.6 Sol. It fails clearly if API access is missing; it never presents a deterministic fallback as an AI result.
 
 ## Included targets
 
