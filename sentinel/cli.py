@@ -37,10 +37,12 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
     console.print(Panel.fit("[bold cyan]SENTINEL DEV[/] | Graphify-guided CI survivability check"))
     graph = build_graph(target, focus=FOCUS.get(target.name, ""))
     console.print(f"[cyan][MAP][/cyan] Graphify mapped {len(graph.nodes)} nodes and {len(graph.edges)} edges.")
+    console.print(f"[cyan][AGENT][/cyan] phase 1/4: requesting a bounded chaos plan from {live_generator_label() if live_api_key() else 'deterministic fixtures'} ...")
     chaos = generate_chaos_plan(target, graph, defcon)
     console.print(f"[magenta][CHAOS][/magenta] {chaos.title}")
     console.print(f"[dim][AGENT][/dim] chaos plan: {chaos.generator}")
-    result = run_attack(target, decode_code(chaos.attack_code_b64))
+    console.print("[cyan][ARENA][/cyan] phase 2/4: preparing the isolated Docker arena ...")
+    result = run_attack(target, decode_code(chaos.attack_code_b64), progress=lambda message: console.print(f"[dim][ARENA][/dim] {message}"))
     color = "green" if result.status == RunStatus.passed else "red"
     console.print(f"[{color}][ARENA] {result.status.value.upper()}[/] via {result.runner}")
     if result.stdout.strip():
@@ -50,11 +52,13 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
     report = SentinelReport(run_id=str(uuid.uuid4()), target=str(target), graph=graph, chaos=chaos, sandbox=result, notes=["Graphify is mandatory; Docker executes a complete HTTP target without host volume mounts."])
     if result.status in {RunStatus.failed, RunStatus.timed_out} and patch:
         console.print("[bright_green][HEAL][/bright_green] creating a review branch and patch ...")
+        console.print(f"[cyan][AGENT][/cyan] phase 3/4: requesting remediation from {live_generator_label() if live_api_key() else 'deterministic fixtures'} ...")
         remediation = generate_patch(target, graph, result)
         console.print(f"[dim][AGENT][/dim] remediation: {remediation.generator}")
         git_result = apply_patch_on_branch(ROOT, target, remediation)
         console.print(Panel(git_result.diff, title="Applied remediation diff", border_style="cyan"))
-        verification = run_attack(target, decode_code(chaos.attack_code_b64))
+        console.print("[cyan][ARENA][/cyan] phase 4/4: rerunning the identical probe against the patched branch ...")
+        verification = run_attack(target, decode_code(chaos.attack_code_b64), progress=lambda message: console.print(f"[dim][ARENA][/dim] {message}"))
         report.patch, report.git, report.verification = remediation, git_result, verification
         if verification.status == RunStatus.passed:
             console.print(f"[bright_green]VERIFIED[/bright_green] {git_result.branch} ({git_result.commit[:8]}) survives the same probe.")

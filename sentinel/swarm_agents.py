@@ -4,6 +4,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
+import time
 from pathlib import Path
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -11,6 +13,19 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from sentinel.schemas import ChaosPlan, KnowledgeGraph, PatchPlan, SandboxResult
 
 _RETRY = dict(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(Exception), reraise=True)
+
+
+def _progress(message: str) -> None:
+    print(f"[LLM] {message}", flush=True)
+
+
+def _before_retry(retry_state) -> None:
+    wait = retry_state.next_action.sleep if retry_state.next_action else 0
+    error = retry_state.outcome.exception() if retry_state.outcome else None
+    _progress(f"attempt {retry_state.attempt_number} failed ({type(error).__name__ if error else 'unknown'}); retrying in {wait:.0f}s.")
+
+
+_RETRY["before_sleep"] = _before_retry
 
 
 def _require_live_ai() -> bool:
@@ -102,7 +117,18 @@ def _openrouter_json(system: str, user: str, schema: type[ChaosPlan] | type[Patc
     Responses.parse is OpenAI-specific and free routed models can emit plain text.
     This path explicitly requests a JSON object, then validates it locally.
     """
-    response = _client().chat.completions.create(
+    started = time.monotonic()
+    done = threading.Event()
+
+    def heartbeat() -> None:
+        while not done.wait(5):
+            _progress(f"waiting for {live_generator_label()} response ({time.monotonic() - started:.0f}s elapsed; request still active).")
+
+    _progress(f"sending structured {schema.__name__} request to {live_generator_label()} (attempt may take up to 120s).")
+    thread = threading.Thread(target=heartbeat, daemon=True)
+    thread.start()
+    try:
+        response = _client().chat.completions.create(
         model=live_model(),
         messages=[
             {"role": "system", "content": f"{system} Reply with exactly one JSON object and nothing else."},
@@ -111,7 +137,11 @@ def _openrouter_json(system: str, user: str, schema: type[ChaosPlan] | type[Patc
         response_format={"type": "json_object"},
         temperature=0,
         max_completion_tokens=4096,
-    )
+        )
+    finally:
+        done.set()
+        thread.join(timeout=0.1)
+    _progress(f"provider responded after {time.monotonic() - started:.1f}s; validating JSON contract.")
     if not response.choices:
         raise RuntimeError("OpenRouter returned no completion choices.")
     choice = response.choices[0]
