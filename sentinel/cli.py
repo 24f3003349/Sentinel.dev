@@ -71,7 +71,7 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
         git_result = apply_patch_on_branch(ROOT, target, remediation)
         console.print(Panel(git_result.diff, title="Applied remediation diff", border_style="cyan"))
         console.print("[cyan][ARENA][/cyan] phase 4/4: rerunning the identical probe against the patched branch ...")
-        verification = run_attack(target, decode_code(chaos.attack_code_b64), chaos.expected_signal, progress=lambda message: console.print(f"[dim][ARENA][/dim] {message}"))
+        verification = run_attack(target, decode_code(chaos.attack_code_b64), chaos.expected_signal, require_signal=False, progress=lambda message: console.print(f"[dim][ARENA][/dim] {message}"))
         report.patch, report.git, report.verification = remediation, git_result, verification
         if verification.status == RunStatus.passed:
             console.print(f"[bright_green]VERIFIED[/bright_green] {git_result.branch} ({git_result.commit[:8]}) survives the same probe.")

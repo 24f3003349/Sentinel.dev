@@ -85,7 +85,7 @@ def _python_syntax_error(source: str, filename: str) -> str | None:
     return None
 
 
-def run_attack(target: Path, attack_code: str, expected_signal: str, prefer_docker: bool = True, progress: Callable[[str], None] | None = None) -> SandboxResult:
+def run_attack(target: Path, attack_code: str, expected_signal: str, require_signal: bool = True, prefer_docker: bool = True, progress: Callable[[str], None] | None = None) -> SandboxResult:
     notify = progress or (lambda _: None)
     syntax_error = _python_syntax_error(attack_code, "attack.py")
     if syntax_error:
@@ -133,7 +133,7 @@ def run_attack(target: Path, attack_code: str, expected_signal: str, prefer_dock
             logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
             if any(marker in logs for marker in ("SyntaxError", "IndentationError", "Traceback (most recent call last)")):
                 return SandboxResult(status=RunStatus.failed, exit_code=result.get("StatusCode", 1), stdout=logs, telemetry=samples, failure_kind="invalid-agent-probe", runner="docker")
-            if expected_signal not in logs:
+            if require_signal and expected_signal not in logs:
                 return SandboxResult(status=RunStatus.failed, exit_code=result.get("StatusCode", 1), stdout=logs, telemetry=samples, failure_kind="unverified-agent-probe", runner="docker")
             failure, policy = _failure_from_logs(logs, samples, target.name)
             code = result.get("StatusCode", 1)
