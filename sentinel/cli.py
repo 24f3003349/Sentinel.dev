@@ -98,7 +98,7 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
         console.print("[bold red]AGENT PROBE REJECTED[/bold red] No patch branch was created because the generated probe did not prove the expected invariant.")
     elif result.status in {RunStatus.failed, RunStatus.timed_out} and patch:
         console.print("[bright_green][HEAL][/bright_green] creating a review branch and patch ...")
-        console.print(f"[cyan][MODEL][/cyan] phase 3/4: {live_generator_label() if live_api_key() else 'deterministic fixtures'} is interpreting Graphify + Docker evidence and drafting remediation ...")
+        console.print(f"[cyan][MODEL][/cyan] phase 3/4: {live_generator_label() if live_api_key() else 'deterministic fixtures'} is selecting a remediation from Graphify + Docker evidence ...")
         remediation = generate_patch(target, graph, result)
         console.print(f"[dim][AGENT][/dim] remediation: {remediation.generator}")
         patched_source = decode_code(remediation.patched_source_b64)

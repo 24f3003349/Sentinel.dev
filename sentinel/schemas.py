@@ -51,6 +51,13 @@ class ProbeSelection(BaseModel):
     risk_level: int = Field(ge=1, le=5)
 
 
+class RemediationSelection(BaseModel):
+    """A live-model decision over reviewed remediation capabilities."""
+    title: str
+    rationale: str
+    strategy: str
+
+
 class TelemetrySample(BaseModel):
     elapsed_seconds: float
     cpu_percent: float = 0.0

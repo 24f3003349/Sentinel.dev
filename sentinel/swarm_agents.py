@@ -11,7 +11,7 @@ from pathlib import Path
 
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from sentinel.schemas import ChaosPlan, KnowledgeGraph, PatchPlan, ProbeSelection, SandboxResult
+from sentinel.schemas import ChaosPlan, KnowledgeGraph, PatchPlan, ProbeSelection, RemediationSelection, SandboxResult
 
 def _retryable(error: BaseException) -> bool:
     """Retry timeouts/rate limits/server errors, not bad credentials or retired models."""
@@ -129,7 +129,7 @@ def _context(target: Path, graph: KnowledgeGraph) -> str:
     return f"Target directory: {target.name}\nTarget source:\n{source}\nGraph:\n{graph.model_dump_json()}"
 
 
-def _parse_json_object(raw: str, schema: type[ChaosPlan] | type[PatchPlan] | type[ProbeSelection]):
+def _parse_json_object(raw: str, schema: type[ChaosPlan] | type[PatchPlan] | type[ProbeSelection] | type[RemediationSelection]):
     """Accept JSON-object responses even when a compatible provider adds code fences."""
     candidate = raw.strip()
     if candidate.startswith("```"):
@@ -144,7 +144,7 @@ def _parse_json_object(raw: str, schema: type[ChaosPlan] | type[PatchPlan] | typ
         raise RuntimeError(f"Model returned invalid JSON for {schema.__name__}: {exc}") from exc
 
 
-def _compatible_json(system: str, user: str, schema: type[ChaosPlan] | type[PatchPlan] | type[ProbeSelection]):
+def _compatible_json(system: str, user: str, schema: type[ChaosPlan] | type[PatchPlan] | type[ProbeSelection] | type[RemediationSelection]):
     """Use provider-native structured output with a visible request heartbeat."""
     started = time.monotonic()
     done = threading.Event()
@@ -355,6 +355,32 @@ def deterministic_patch(target: Path) -> PatchPlan:
     return PatchPlan(title=f"Remediate {kind.replace('_', ' ')}", rationale="Replace the unsafe operation with a bounded or atomic implementation.", patched_source_b64=_encode(_fixed_source(kind)), verification_note="Sentinel reruns the same Docker chaos probe after this commit.", generator="deterministic-demo")
 
 
+def _approved_strategy(target: Path) -> str:
+    return {
+        "race_condition": "atomic_conditional_inventory_update",
+        "memory_leak": "streaming_export",
+        "redos_attack": "linear_time_allow_list",
+    }.get(_kind(target), "")
+
+
+@retry(**_RETRY)
+def _openai_remediation_selection(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> RemediationSelection:
+    strategy = _approved_strategy(target)
+    system = (
+        "You are Sentinel's remediation strategist. Inspect the supplied Graphify graph and Docker finding, "
+        "then select the one approved remediation strategy. You do not return code. "
+        f"strategy MUST exactly equal '{strategy}'."
+    )
+    user = _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}\nApproved strategy: {strategy}"
+    if live_provider() in {"openrouter", "google"}:
+        return _compatible_json(system, user, RemediationSelection)
+    client = _client()
+    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": system}, {"role": "user", "content": user}], text_format=RemediationSelection)
+    if response.output_parsed is None:
+        raise RuntimeError("No structured remediation selection returned")
+    return response.output_parsed
+
+
 def _validate_patch(plan: PatchPlan) -> None:
     try:
         source = decode_code(plan.patched_source_b64)
@@ -403,16 +429,14 @@ def generate_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -
         if _require_live_ai():
             raise RuntimeError(f"SENTINEL_REQUIRE_LIVE_AI is set but {live_provider()} API access is missing.")
         return deterministic_patch(target)
-    try:
-        plan = _openai_patch(target, graph, result)
-        try:
-            _validate_patch(plan)
-        except ValueError as error:
-            _progress("generated patch failed Python validation; requesting one live compiler-guided correction.")
-            plan = repair_invalid_patch(target, graph, result, plan, error)
-            _validate_patch(plan)
-        return plan
-    except Exception:
-        if _require_live_ai():
-            raise
-        return deterministic_patch(target).model_copy(update={"generator": "deterministic-fallback-after-openai-error"})
+    selection = _openai_remediation_selection(target, graph, result)
+    expected = _approved_strategy(target)
+    if selection.strategy != expected:
+        raise RuntimeError(f"Model selected unsupported remediation '{selection.strategy}'; expected '{expected}'.")
+    return deterministic_patch(target).model_copy(
+        update={
+            "title": selection.title,
+            "rationale": selection.rationale,
+            "generator": f"{live_generator_label()} (reviewed remediation executor)",
+        }
+    )
