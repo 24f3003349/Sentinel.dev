@@ -3,6 +3,10 @@ from pathlib import Path
 from sentinel.swarm_agents import decode_code, deterministic_chaos_plan, deterministic_patch, live_model, live_provider
 
 
+def test_decode_code_accepts_provider_omitted_base64_padding() -> None:
+    assert decode_code("aGVsbG8") == "hello"
+
+
 def test_every_target_has_a_bounded_offline_probe() -> None:
     root = Path(__file__).resolve().parents[1] / "dummy_targets"
     expected = {"race_condition": "RACE_INVARIANT_VIOLATION", "memory_leak": "MEMORY_PRESSURE_VIOLATION", "redos_attack": "REDOS_TIMEOUT_VIOLATION"}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -104,7 +105,19 @@ def _encode(value: str) -> str:
 
 
 def decode_code(value: str) -> str:
-    return base64.b64decode(value.encode("ascii"), validate=True).decode("utf-8")
+    """Decode standard Base64, accepting omitted trailing padding from providers.
+
+    Values containing non-Base64 characters still fail validation; they never
+    reach the Docker arena as executable code.
+    """
+    compact = value.strip()
+    if not compact or not re.fullmatch(r"[A-Za-z0-9+/]*={0,2}", compact):
+        raise ValueError("Code payload is not standard Base64.")
+    padded = compact.rstrip("=") + ("=" * (-len(compact.rstrip("=")) % 4))
+    try:
+        return base64.b64decode(padded.encode("ascii"), validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Code payload is not valid UTF-8 Base64: {exc}") from exc
 
 
 def _kind(target: Path) -> str:
@@ -369,7 +382,10 @@ def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) ->
 @retry(**_RETRY)
 def repair_invalid_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult, invalid: PatchPlan, error: ValueError) -> PatchPlan:
     system = "You are repairing a rejected FastAPI patch. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. It MUST compile and it MUST start successfully with the target's existing pytest happy-path suite. The reported rejection may be a runtime error such as invalid SQL, not only a Python syntax error. Do not use Markdown or backticks. Preserve the FastAPI /book and /health API and fix the observed race."
-    invalid_source = decode_code(invalid.patched_source_b64)
+    try:
+        invalid_source = decode_code(invalid.patched_source_b64)
+    except ValueError:
+        invalid_source = "<unavailable: patched_source_b64 was malformed; do not repeat it>"
     user = _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}\nInvalid candidate source:\n{invalid_source}\nCompiler error: {error}"
     if live_provider() in {"openrouter", "google"}:
         return _compatible_json(system, user, PatchPlan).model_copy(update={"generator": live_generator_label()})
