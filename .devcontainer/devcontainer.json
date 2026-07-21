@@ -4,7 +4,7 @@
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
-  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && $HOME/.local/bin/uv sync --all-extras --frozen",
+  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && sudo ln -sf $HOME/.local/bin/uv /usr/local/bin/uv && uv sync --all-extras --frozen",
   "remoteUser": "vscode",
   "customizations": {
     "vscode": {
