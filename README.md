@@ -2,7 +2,9 @@
 
 # Sentinel.dev
 
-**Find the failure before production does.** Sentinel uses Graphify to map a local service, runs a bounded Docker chaos probe, and verifies a remediation against that same probe.
+**Code at AI speed. Test at human-AI speed.**
+
+Sentinel uses Graphify to map a local service, runs a bounded Docker chaos probe, and verifies a remediation against that same probe.
 
 ## Judge demo — no API key required
 
@@ -33,7 +35,7 @@ git checkout main
 
 ## Live model demo
 
-Live mode uses the configured provider to select the Graphify-guided bounded probe and draft the remediation. Sentinel executes only its reviewed probe implementation inside Docker; it does not execute arbitrary model-authored attack code.
+Live mode uses the configured provider to select the Graphify-guided bounded probe and the approved remediation strategy. Sentinel executes its reviewed probe and remediation implementations inside Docker; it does not execute arbitrary model-authored code.
 
 ```powershell
 $env:SENTINEL_LLM_PROVIDER = "google"
