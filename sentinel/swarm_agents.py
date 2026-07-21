@@ -8,11 +8,17 @@ import threading
 import time
 from pathlib import Path
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from sentinel.schemas import ChaosPlan, KnowledgeGraph, PatchPlan, SandboxResult
 
-_RETRY = dict(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(Exception), reraise=True)
+def _retryable(error: BaseException) -> bool:
+    """Retry timeouts/rate limits/server errors, not bad credentials or retired models."""
+    status = getattr(error, "status_code", None)
+    return status is None or status == 429 or status >= 500
+
+
+_RETRY = dict(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception(_retryable), reraise=True)
 
 
 def _progress(message: str) -> None:
@@ -51,7 +57,7 @@ def live_model() -> str:
     if provider == "openrouter":
         return "openai/gpt-5.6-sol"
     if provider == "google":
-        return "gemini-2.5-flash"
+        return "gemini-3.5-flash"
     return "gpt-5.6-sol"
 
 

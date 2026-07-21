@@ -29,4 +29,4 @@ def test_google_uses_gemini_default_model(monkeypatch) -> None:
     monkeypatch.setenv("SENTINEL_LLM_PROVIDER", "google")
     monkeypatch.delenv("SENTINEL_LLM_MODEL", raising=False)
     assert live_provider() == "google"
-    assert live_model() == "gemini-2.5-flash"
+    assert live_model() == "gemini-3.5-flash"

@@ -32,7 +32,7 @@ cd Sentinel.dev
 uv sync --all-extras --frozen
 $env:SENTINEL_LLM_PROVIDER = "google"
 $env:GEMINI_API_KEY = "your_google_ai_studio_key"
-$env:SENTINEL_LLM_MODEL = "gemini-2.5-flash"
+$env:SENTINEL_LLM_MODEL = "gemini-3.5-flash"
 uv run python run_sentinel_demo.py --mode live
 ```
 
