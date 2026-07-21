@@ -110,8 +110,21 @@ def _openrouter_json(system: str, user: str, schema: type[ChaosPlan] | type[Patc
         ],
         response_format={"type": "json_object"},
         temperature=0,
+        max_completion_tokens=4096,
     )
-    return _parse_json_object(response.choices[0].message.content or "", schema)
+    if not response.choices:
+        raise RuntimeError("OpenRouter returned no completion choices.")
+    choice = response.choices[0]
+    content = choice.message.content or ""
+    if not content.strip():
+        reasoning = getattr(choice.message, "reasoning", None)
+        reasoning_hint = f", reasoning_chars={len(str(reasoning))}" if reasoning else ""
+        raise RuntimeError(
+            "OpenRouter returned an empty completion "
+            f"(finish_reason={choice.finish_reason or 'unknown'}{reasoning_hint}). "
+            "The routed model/provider produced no final JSON. Retry later or choose a different model."
+        )
+    return _parse_json_object(content, schema)
 
 
 def deterministic_chaos_plan(target: Path, risk_level: int) -> ChaosPlan:
