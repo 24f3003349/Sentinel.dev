@@ -35,7 +35,8 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
     if not (target / "main.py").is_file() or not (target / "requirements.txt").is_file():
         raise typer.BadParameter("A Sentinel target must contain main.py and requirements.txt.")
     console.print(Panel.fit("[bold cyan]SENTINEL DEV[/] | Graphify-guided CI survivability check"))
-    graph = build_graph(target, focus=FOCUS.get(target.name, ""))
+    console.print("[cyan][MAP][/cyan] phase 0/4: constructing the local Graphify knowledge graph ...")
+    graph = build_graph(target, focus=FOCUS.get(target.name, ""), progress=lambda message: console.print(f"[dim][MAP][/dim] {message}"))
     console.print(f"[cyan][MAP][/cyan] Graphify mapped {len(graph.nodes)} nodes and {len(graph.edges)} edges.")
     console.print(f"[cyan][AGENT][/cyan] phase 1/4: requesting a bounded chaos plan from {live_generator_label() if live_api_key() else 'deterministic fixtures'} ...")
     chaos = generate_chaos_plan(target, graph, defcon)

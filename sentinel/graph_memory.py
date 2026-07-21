@@ -9,14 +9,16 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import Callable
 
 import networkx as nx
 
 from sentinel.schemas import GraphEdge, GraphNode, KnowledgeGraph
 
 
-def _run_graphify(target: Path) -> Path:
+def _run_graphify(target: Path, progress: Callable[[str], None]) -> Path:
     """Build a fresh graph using the upstream Graphify Python module."""
     # Code-only is deliberate: Graphify's local AST extractor needs no LLM/API
     # key, while docs/images semantic extraction is outside Sentinel's CI scope.
@@ -24,8 +26,23 @@ def _run_graphify(target: Path) -> Path:
         sys.executable, "-m", "graphify", "extract", str(target), "--force",
         "--code-only", "--no-cluster",
     ]
+    progress("invoking Graphify code extractor (AST-only, local filesystem).")
+    started = time.monotonic()
     try:
-        subprocess.run(args, check=True, capture_output=True, text=True, timeout=60)
+        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        next_notice = 3.0
+        while process.poll() is None:
+            elapsed = time.monotonic() - started
+            if elapsed >= 60:
+                process.kill()
+                raise subprocess.TimeoutExpired(args, 60)
+            if elapsed >= next_notice:
+                progress(f"Graphify extractor is still running ({elapsed:.0f}s elapsed).")
+                next_notice += 3.0
+            time.sleep(0.15)
+        stdout, stderr = process.communicate()
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, args, stdout, stderr)
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(
             "Graphify is required. Install the declared graphifyy dependency and retry. "
@@ -37,11 +54,17 @@ def _run_graphify(target: Path) -> Path:
     return output
 
 
-def build_graph(target: Path, focus: str = "book") -> KnowledgeGraph:
+def build_graph(target: Path, focus: str = "book", progress: Callable[[str], None] | None = None) -> KnowledgeGraph:
     target = target.resolve()
-    payload = json.loads(_run_graphify(target).read_text(encoding="utf-8"))
+    notify = progress or (lambda _: None)
+    python_files = list(target.rglob("*.py"))
+    notify(f"discovering source: {len(python_files)} Python files in {target.name}.")
+    output = _run_graphify(target, notify)
+    notify("Graphify extraction complete; reading graphify-out/graph.json.")
+    payload = json.loads(output.read_text(encoding="utf-8"))
     raw_nodes = payload.get("nodes", [])
     raw_edges = payload.get("edges", payload.get("links", []))
+    notify(f"normalizing {len(raw_nodes)} Graphify nodes and {len(raw_edges)} relationships.")
     nodes = [
         GraphNode(
             id=str(item["id"]),
@@ -60,6 +83,7 @@ def build_graph(target: Path, focus: str = "book") -> KnowledgeGraph:
     ]
     result = KnowledgeGraph(provider="graphify", nodes=nodes, edges=edges)
     result.blast_radius = _blast_radius(result, focus)
+    notify(f"computed blast radius for '{focus}': {len(result.blast_radius)} evidence-backed nodes.")
     return result
 
 
