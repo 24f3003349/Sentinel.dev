@@ -2,30 +2,42 @@
 
 # Sentinel.dev
 
-**Graphify-guided chaos testing that finds a production-shaped failure, asks GPT-5.6 Sol for a repair, and proves the repair in Docker.**
+**Graphify-guided chaos testing that finds a production-shaped failure, asks a live model for a repair, and proves the repair in Docker.**
 
 ## What the demo proves
 
 1. The target's ordinary **local happy-path tests pass**.
 2. **Graphify maps the target** and identifies the blast radius.
-3. Docker runs a production-shaped concurrent HTTP attack that exposes what the local test missed.
+3. In live mode, the model selects a bounded probe from the Graphify context; Docker runs Sentinel's reviewed implementation of that production-shaped HTTP attack.
 4. Sentinel creates a review branch, applies a remediation, then **reruns the identical probe**.
 
-In `--mode live`, GPT-5.6 Sol generates the attack and remediation. In `--mode deterministic`, Sentinel uses the same Docker, Graphify, Git, and verification path with fixed safe fixtures - useful for rehearsing without API credentials.
+In `--mode live`, the configured model makes the Graphify-guided probe selection and drafts the remediation. Sentinel never executes model-authored arbitrary attack code: Docker receives a reviewed, target-bounded probe. In `--mode deterministic`, Sentinel uses the same Docker, Graphify, Git, and verification path with fixed safe fixtures—useful for rehearsing without API credentials.
 
 Live output ends only when it can show:
 
 ```text
-[AGENT] chaos plan: openrouter:openai/gpt-5.6-sol
-[AGENT] remediation: openrouter:openai/gpt-5.6-sol
+[PROBE] execution plan: google:gemini-3.5-flash
+[MODEL] ... drafting remediation
 VERIFIED
 ```
-
-Direct OpenAI runs show `openai:gpt-5.6-sol` instead.
 
 ## Run the live demo
 
 Requirements: Docker Desktop, Python 3.12+, [uv](https://docs.astral.sh/uv/), and live API access. Google AI Studio, OpenAI Platform, and OpenRouter are supported. ChatGPT/Codex plan credits do not power API calls.
+
+**Before running either demo, open Docker Desktop and wait until its status says it is running.** Sentinel intentionally requires Docker for its isolated HTTP arena; it will not silently skip this proof.
+
+## One-command judge rehearsal
+
+```powershell
+git clone https://github.com/24f3003349/Sentinel.dev.git
+cd Sentinel.dev
+uv sync --all-extras --frozen
+# Open Docker Desktop and wait until it is running.
+uv run python run_sentinel_demo.py --mode deterministic
+```
+
+This requires no API key and demonstrates the complete Graphify → Docker finding → patch diff → Docker verification path.
 
 ```powershell
 cd Sentinel.dev
@@ -44,7 +56,13 @@ For direct OpenAI Platform access, set `SENTINEL_LLM_PROVIDER=openai`, `OPENAI_A
 uv run python run_sentinel_demo.py --mode deterministic
 ```
 
-Both modes visibly run `LOCAL TESTS PASS -> Graphify map -> chaos finding -> patch -> VERIFIED`. The agent label tells the truth: `deterministic-demo` means no LLM call; `openrouter:openai/gpt-5.6-sol` or `openai:gpt-5.6-sol` means a live model call.
+Each successful run leaves you on a generated `sentinel/fix-...` branch so the verified remediation is inspectable. Before running the failure demonstration again, reset only the checked-out branch—not files—with:
+
+```powershell
+git checkout main
+```
+
+Both modes visibly run `LOCAL TESTS PASS -> Graphify map -> chaos finding -> patch -> VERIFIED`. `deterministic-demo` means no model call. A provider/model label such as `google:gemini-3.5-flash` means a live model call.
 
 ## Included targets
 
