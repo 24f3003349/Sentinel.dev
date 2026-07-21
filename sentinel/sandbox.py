@@ -133,8 +133,15 @@ def run_attack(target: Path, attack_code: str, expected_signal: str, require_sig
             logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
             if any(marker in logs for marker in ("SyntaxError", "IndentationError", "Traceback (most recent call last)")):
                 return SandboxResult(status=RunStatus.failed, exit_code=result.get("StatusCode", 1), stdout=logs, telemetry=samples, failure_kind="invalid-agent-probe", runner="docker")
-            if require_signal and expected_signal not in logs:
+            observed_signal = expected_signal in logs
+            if require_signal and not observed_signal:
                 return SandboxResult(status=RunStatus.failed, exit_code=result.get("StatusCode", 1), stdout=logs, telemetry=samples, failure_kind="unverified-agent-probe", runner="docker")
+            if require_signal and observed_signal:
+                # The live plan's declared invariant is the proof of a finding,
+                # even when it is not one of Sentinel's built-in demo markers.
+                return SandboxResult(status=RunStatus.failed, exit_code=result.get("StatusCode", 1), stdout=logs, telemetry=samples, failure_kind="agent-reported-invariant", runner="docker")
+            if not require_signal and observed_signal:
+                return SandboxResult(status=RunStatus.failed, exit_code=result.get("StatusCode", 1), stdout=logs, telemetry=samples, failure_kind="invariant-still-violated", runner="docker")
             failure, policy = _failure_from_logs(logs, samples, target.name)
             code = result.get("StatusCode", 1)
             failed = bool(code) or bool(failure)
