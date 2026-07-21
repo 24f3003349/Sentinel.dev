@@ -239,7 +239,7 @@ asyncio.run(main())
 
 @retry(**_RETRY)
 def _openai_chaos(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
-    system = "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python HTTP probe for the supplied FastAPI target. No filesystem writes, subprocesses, external network, or secret access. Return executable code only as base64 in attack_code_b64."
+    system = "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python 3.12 HTTP probe for the supplied FastAPI target. The decoded attack_code_b64 MUST compile with Python compile(source, 'attack.py', 'exec'); do not use Markdown backticks, shell syntax, or pseudocode. No filesystem writes, subprocesses, external network, or secret access. The script MUST print expected_signal immediately before raising SystemExit when it proves the invariant violation. Return executable code only as base64 in attack_code_b64."
     user = _context(target, graph) + f"\nDEFCON: {risk_level}"
     if live_provider() in {"openrouter", "google"}:
         return _compatible_json(system, user, ChaosPlan).model_copy(update={"generator": live_generator_label()})

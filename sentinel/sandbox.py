@@ -77,8 +77,20 @@ def _sample(container, started: float) -> TelemetrySample | None:
         return None
 
 
-def run_attack(target: Path, attack_code: str, prefer_docker: bool = True, progress: Callable[[str], None] | None = None) -> SandboxResult:
+def _python_syntax_error(source: str, filename: str) -> str | None:
+    try:
+        compile(source, filename, "exec")
+    except SyntaxError as exc:
+        return f"{filename}:{exc.lineno}:{exc.offset}: {exc.msg}"
+    return None
+
+
+def run_attack(target: Path, attack_code: str, expected_signal: str, prefer_docker: bool = True, progress: Callable[[str], None] | None = None) -> SandboxResult:
     notify = progress or (lambda _: None)
+    syntax_error = _python_syntax_error(attack_code, "attack.py")
+    if syntax_error:
+        notify(f"rejected generated probe before Docker: {syntax_error}")
+        return SandboxResult(status=RunStatus.failed, stderr=syntax_error, failure_kind="invalid-agent-probe", runner="validation")
     if not prefer_docker or not docker_available():
         notify("Docker Desktop is unavailable; arena was not started.")
         return SandboxResult(status=RunStatus.unavailable, stderr="Docker Desktop is required for the full HTTP sandbox.", failure_kind="docker-unavailable", runner="none")
@@ -119,6 +131,10 @@ def run_attack(target: Path, attack_code: str, prefer_docker: bool = True, progr
             result = container.wait(timeout=2)
             notify("container exited; collecting logs and evaluating the invariant.")
             logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+            if any(marker in logs for marker in ("SyntaxError", "IndentationError", "Traceback (most recent call last)")):
+                return SandboxResult(status=RunStatus.failed, exit_code=result.get("StatusCode", 1), stdout=logs, telemetry=samples, failure_kind="invalid-agent-probe", runner="docker")
+            if expected_signal not in logs:
+                return SandboxResult(status=RunStatus.failed, exit_code=result.get("StatusCode", 1), stdout=logs, telemetry=samples, failure_kind="unverified-agent-probe", runner="docker")
             failure, policy = _failure_from_logs(logs, samples, target.name)
             code = result.get("StatusCode", 1)
             failed = bool(code) or bool(failure)

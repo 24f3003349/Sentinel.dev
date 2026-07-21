@@ -43,7 +43,7 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
     console.print(f"[magenta][CHAOS][/magenta] {chaos.title}")
     console.print(f"[dim][AGENT][/dim] chaos plan: {chaos.generator}")
     console.print("[cyan][ARENA][/cyan] phase 2/4: preparing the isolated Docker arena ...")
-    result = run_attack(target, decode_code(chaos.attack_code_b64), progress=lambda message: console.print(f"[dim][ARENA][/dim] {message}"))
+    result = run_attack(target, decode_code(chaos.attack_code_b64), chaos.expected_signal, progress=lambda message: console.print(f"[dim][ARENA][/dim] {message}"))
     color = "green" if result.status == RunStatus.passed else "red"
     console.print(f"[{color}][ARENA] {result.status.value.upper()}[/] via {result.runner}")
     if result.stdout.strip():
@@ -51,15 +51,27 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
     if result.policy_violations:
         console.print(Panel("\n".join(result.policy_violations), title="Telemetry policy", border_style="red"))
     report = SentinelReport(run_id=str(uuid.uuid4()), target=str(target), graph=graph, chaos=chaos, sandbox=result, notes=["Graphify is mandatory; Docker executes a complete HTTP target without host volume mounts."])
-    if result.status in {RunStatus.failed, RunStatus.timed_out} and patch:
+    if result.failure_kind in {"invalid-agent-probe", "unverified-agent-probe"}:
+        console.print("[bold red]AGENT PROBE REJECTED[/bold red] No patch branch was created because the generated probe did not prove the expected invariant.")
+    elif result.status in {RunStatus.failed, RunStatus.timed_out} and patch:
         console.print("[bright_green][HEAL][/bright_green] creating a review branch and patch ...")
         console.print(f"[cyan][AGENT][/cyan] phase 3/4: requesting remediation from {live_generator_label() if live_api_key() else 'deterministic fixtures'} ...")
         remediation = generate_patch(target, graph, result)
         console.print(f"[dim][AGENT][/dim] remediation: {remediation.generator}")
+        patched_source = decode_code(remediation.patched_source_b64)
+        try:
+            compile(patched_source, "main.py", "exec")
+        except SyntaxError as exc:
+            console.print(f"[bold red]AGENT PATCH REJECTED[/bold red] main.py:{exc.lineno}:{exc.offset}: {exc.msg}")
+            report.patch = remediation
+            serialized = report.model_dump_json(indent=2)
+            _report_path().write_text(serialized, encoding="utf-8")
+            _report_path(target.name).write_text(serialized, encoding="utf-8")
+            return report
         git_result = apply_patch_on_branch(ROOT, target, remediation)
         console.print(Panel(git_result.diff, title="Applied remediation diff", border_style="cyan"))
         console.print("[cyan][ARENA][/cyan] phase 4/4: rerunning the identical probe against the patched branch ...")
-        verification = run_attack(target, decode_code(chaos.attack_code_b64), progress=lambda message: console.print(f"[dim][ARENA][/dim] {message}"))
+        verification = run_attack(target, decode_code(chaos.attack_code_b64), chaos.expected_signal, progress=lambda message: console.print(f"[dim][ARENA][/dim] {message}"))
         report.patch, report.git, report.verification = remediation, git_result, verification
         if verification.status == RunStatus.passed:
             console.print(f"[bright_green]VERIFIED[/bright_green] {git_result.branch} ({git_result.commit[:8]}) survives the same probe.")
