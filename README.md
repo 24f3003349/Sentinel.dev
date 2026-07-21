@@ -6,6 +6,14 @@
 
 Sentinel uses Graphify to map a local service, runs a bounded Docker chaos probe, and verifies a remediation against that same probe.
 
+## What is real
+
+- **Graphify code graph:** Sentinel maps the local source tree and calculates the affected dependency blast radius.
+- **Real Docker execution:** Sentinel builds and runs the target FastAPI service inside an isolated container, then sends concurrent HTTP requests to the live service.
+- **Runtime telemetry:** Sentinel records Docker CPU and memory telemetry and enforces resource limits and a hard timeout.
+- **Verified remediation:** Sentinel creates a review branch, commits the patch, and reruns the same Docker probe before reporting `VERIFIED`.
+- **Optional GitHub PR:** With `GITHUB_TOKEN` configured, Sentinel can push the review branch and open a GitHub pull request.
+
 ## Judge demo — no API key required
 
 Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/), and Docker Desktop.
