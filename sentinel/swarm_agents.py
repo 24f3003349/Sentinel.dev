@@ -15,7 +15,9 @@ from sentinel.schemas import ChaosPlan, KnowledgeGraph, PatchPlan, SandboxResult
 def _retryable(error: BaseException) -> bool:
     """Retry timeouts/rate limits/server errors, not bad credentials or retired models."""
     status = getattr(error, "status_code", None)
-    return status is None or status == 429 or status >= 500
+    if isinstance(status, int):
+        return status == 429 or status >= 500
+    return type(error).__name__ in {"APITimeoutError", "APIConnectionError", "InternalServerError", "RateLimitError"}
 
 
 _RETRY = dict(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception(_retryable), reraise=True)
@@ -130,11 +132,7 @@ def _parse_json_object(raw: str, schema: type[ChaosPlan] | type[PatchPlan]):
 
 
 def _compatible_json(system: str, user: str, schema: type[ChaosPlan] | type[PatchPlan]):
-    """Use Chat Completions JSON mode for OpenRouter and Google compatibility APIs.
-
-    Responses.parse is OpenAI-specific and free routed models can emit plain text.
-    This path explicitly requests a JSON object, then validates it locally.
-    """
+    """Use provider-native structured output with a visible request heartbeat."""
     started = time.monotonic()
     done = threading.Event()
 
@@ -146,25 +144,35 @@ def _compatible_json(system: str, user: str, schema: type[ChaosPlan] | type[Patc
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
     try:
-        request = {
-            "model": live_model(),
-            "messages": [
-                {"role": "system", "content": f"{system} Reply with exactly one JSON object and nothing else."},
-                {"role": "user", "content": user},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0,
-        }
-        if live_provider() == "openrouter":
-            request["max_completion_tokens"] = 4096
-        response = _client().chat.completions.create(**request)
+        messages = [
+            {"role": "system", "content": f"{system} Reply with exactly one JSON object and nothing else."},
+            {"role": "user", "content": user},
+        ]
+        if live_provider() == "google":
+            # Google's compatibility docs explicitly support this Pydantic parse path.
+            response = _client().beta.chat.completions.parse(
+                model=live_model(), messages=messages, response_format=schema
+            )
+        else:
+            request = {
+                "model": live_model(), "messages": messages,
+                "response_format": {"type": "json_object"}, "temperature": 0,
+                "max_completion_tokens": 4096,
+            }
+            response = _client().chat.completions.create(**request)
     finally:
         done.set()
         thread.join(timeout=0.1)
     _progress(f"provider responded after {time.monotonic() - started:.1f}s; validating JSON contract.")
     if not response.choices:
-        raise RuntimeError("OpenRouter returned no completion choices.")
+        raise RuntimeError(f"{live_provider()} returned no completion choices.")
     choice = response.choices[0]
+    if live_provider() == "google":
+        parsed = choice.message.parsed
+        if parsed is None:
+            preview = (choice.message.content or "").replace("\n", " ")[:160] or "<empty response>"
+            raise RuntimeError(f"Google returned no schema-valid {schema.__name__}. Response preview: {preview}")
+        return parsed
     content = choice.message.content or ""
     if not content.strip():
         reasoning = getattr(choice.message, "reasoning", None)
