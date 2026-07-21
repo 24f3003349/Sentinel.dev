@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 from pathlib import Path
 
@@ -80,6 +81,39 @@ def _context(target: Path, graph: KnowledgeGraph) -> str:
     return f"Target directory: {target.name}\nTarget source:\n{source}\nGraph:\n{graph.model_dump_json()}"
 
 
+def _parse_json_object(raw: str, schema: type[ChaosPlan] | type[PatchPlan]):
+    """Accept JSON-object responses even when a compatible provider adds code fences."""
+    candidate = raw.strip()
+    if candidate.startswith("```"):
+        candidate = candidate.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    start, end = candidate.find("{"), candidate.rfind("}")
+    if start < 0 or end < start:
+        preview = candidate[:160].replace("\n", " ") or "<empty response>"
+        raise RuntimeError(f"Model returned no JSON object. Response preview: {preview}")
+    try:
+        return schema.model_validate(json.loads(candidate[start : end + 1]))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError(f"Model returned invalid JSON for {schema.__name__}: {exc}") from exc
+
+
+def _openrouter_json(system: str, user: str, schema: type[ChaosPlan] | type[PatchPlan]):
+    """Use OpenRouter's documented Chat Completions compatibility endpoint.
+
+    Responses.parse is OpenAI-specific and free routed models can emit plain text.
+    This path explicitly requests a JSON object, then validates it locally.
+    """
+    response = _client().chat.completions.create(
+        model=live_model(),
+        messages=[
+            {"role": "system", "content": f"{system} Reply with exactly one JSON object and nothing else."},
+            {"role": "user", "content": user},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0,
+    )
+    return _parse_json_object(response.choices[0].message.content or "", schema)
+
+
 def deterministic_chaos_plan(target: Path, risk_level: int) -> ChaosPlan:
     kind = _kind(target)
     if kind == "race_condition":
@@ -134,8 +168,12 @@ asyncio.run(main())
 
 @retry(**_RETRY)
 def _openai_chaos(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
+    system = "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python HTTP probe for the supplied FastAPI target. No filesystem writes, subprocesses, external network, or secret access. Return executable code only as base64 in attack_code_b64."
+    user = _context(target, graph) + f"\nDEFCON: {risk_level}"
+    if live_provider() == "openrouter":
+        return _openrouter_json(system, user, ChaosPlan).model_copy(update={"generator": live_generator_label()})
     client = _client()
-    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python HTTP probe for the supplied FastAPI target. No filesystem writes, subprocesses, external network, or secret access. Return executable code only as base64 in attack_code_b64."}, {"role": "user", "content": _context(target, graph) + f"\nDEFCON: {risk_level}"}], text_format=ChaosPlan)
+    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": system}, {"role": "user", "content": user}], text_format=ChaosPlan)
     if response.output_parsed is None:
         raise RuntimeError("No structured chaos plan returned")
     return response.output_parsed.model_copy(update={"generator": live_generator_label()})
@@ -232,8 +270,15 @@ def deterministic_patch(target: Path) -> PatchPlan:
 
 @retry(**_RETRY)
 def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
+    system = "You are a defensive remediation agent. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. Preserve the target API and address the observed telemetry/failure."
+    user = _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}"
+    if live_provider() == "openrouter":
+        plan = _openrouter_json(system, user, PatchPlan)
+        if plan.file_path != "main.py":
+            raise RuntimeError("OpenRouter remediation attempted to modify a file other than main.py.")
+        return plan.model_copy(update={"generator": live_generator_label()})
     client = _client()
-    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": "You are a defensive remediation agent. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. Preserve the target API and address the observed telemetry/failure."}, {"role": "user", "content": _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}"}], text_format=PatchPlan)
+    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": system}, {"role": "user", "content": user}], text_format=PatchPlan)
     if response.output_parsed is None or response.output_parsed.file_path != "main.py":
         raise RuntimeError("Unsafe or missing patch response")
     return response.output_parsed.model_copy(update={"generator": live_generator_label()})
