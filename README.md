@@ -56,6 +56,17 @@ uv run python run_sentinel_demo.py --mode live
 
 **Google AI Studio offers a free tier for eligible Gemini API usage. Add your own key locally; no API key is stored in this repository.**
 
+### OpenAI Platform
+
+```powershell
+$env:SENTINEL_LLM_PROVIDER = "openai"
+$env:OPENAI_API_KEY = "your_openai_platform_key"
+$env:SENTINEL_LLM_MODEL = "gpt-5.6-sol"
+uv run python run_sentinel_demo.py --mode live
+```
+
+**OpenAI API usage requires an OpenAI Platform key with available API billing or credits. A ChatGPT subscription does not include API usage.**
+
 Google AI Studio, OpenAI Platform, and OpenRouter are supported. ChatGPT/Codex plan credits do not supply API access.
 
 ## Included targets
