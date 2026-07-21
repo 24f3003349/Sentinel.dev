@@ -4,7 +4,7 @@
 
 **Code at AI speed. Test at human-AI speed.**
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=24f3003349%2FSentinel.dev)
+[![View Pitch Deck](https://img.shields.io/badge/View%20Pitch%20Deck-Sentinel.dev-0f766e?style=for-the-badge)](https://sentinel-dev-pitch-deck.vercel.app/)
 
 Sentinel uses Graphify to map a local service, runs a bounded Docker chaos probe, and verifies a remediation against that same probe.
 
