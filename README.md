@@ -4,6 +4,8 @@
 
 **Code at AI speed. Test at human-AI speed.**
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=24f3003349%2FSentinel.dev)
+
 Sentinel uses Graphify to map a local service, runs a bounded Docker chaos probe, and verifies a remediation against that same probe.
 
 ## What is real
@@ -78,4 +80,7 @@ Open `http://localhost:3000`.
 
 ## Where Codex Accelerated Our Workflow
 
-Codex accelerated Graphify orchestration, the isolated Docker harness, the report-driven dashboard, and repeatable verification workflow.
+- Built the Graphify mapping, Docker arena, remediation workflow, and dashboard.
+- Hardened the demo against timeouts, malformed model responses, and unsafe patches.
+- Added deterministic and live demonstration paths with verification logs and patch diffs.
+- Created tests, judge documentation, Git history, and the GitHub delivery workflow.
