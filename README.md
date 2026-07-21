@@ -45,7 +45,7 @@ git checkout main
 
 ## GitHub Codespaces
 
-Click **Open in GitHub Codespaces** above and wait for the dev container to finish building. It provisions Python 3.12, `uv`, project dependencies, and Docker-in-Docker.
+Click **Open in GitHub Codespaces** above to create a new Codespace from `main`, then wait for the dev container to finish building. It provisions Python 3.12, `uv`, project dependencies, and Docker-in-Docker.
 
 In the Codespaces terminal, run:
 
