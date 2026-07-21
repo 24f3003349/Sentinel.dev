@@ -43,6 +43,14 @@ class ChaosPlan(BaseModel):
     generator: str = "deterministic-demo"
 
 
+class ProbeSelection(BaseModel):
+    """A model decision over approved probe capabilities; never executable code."""
+    title: str
+    rationale: str
+    probe_id: str
+    risk_level: int = Field(ge=1, le=5)
+
+
 class TelemetrySample(BaseModel):
     elapsed_seconds: float
     cpu_percent: float = 0.0

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from sentinel.schemas import ChaosPlan, KnowledgeGraph, PatchPlan, SandboxResult
+from sentinel.schemas import ChaosPlan, KnowledgeGraph, PatchPlan, ProbeSelection, SandboxResult
 
 def _retryable(error: BaseException) -> bool:
     """Retry timeouts/rate limits/server errors, not bad credentials or retired models."""
@@ -116,7 +116,7 @@ def _context(target: Path, graph: KnowledgeGraph) -> str:
     return f"Target directory: {target.name}\nTarget source:\n{source}\nGraph:\n{graph.model_dump_json()}"
 
 
-def _parse_json_object(raw: str, schema: type[ChaosPlan] | type[PatchPlan]):
+def _parse_json_object(raw: str, schema: type[ChaosPlan] | type[PatchPlan] | type[ProbeSelection]):
     """Accept JSON-object responses even when a compatible provider adds code fences."""
     candidate = raw.strip()
     if candidate.startswith("```"):
@@ -131,7 +131,7 @@ def _parse_json_object(raw: str, schema: type[ChaosPlan] | type[PatchPlan]):
         raise RuntimeError(f"Model returned invalid JSON for {schema.__name__}: {exc}") from exc
 
 
-def _compatible_json(system: str, user: str, schema: type[ChaosPlan] | type[PatchPlan]):
+def _compatible_json(system: str, user: str, schema: type[ChaosPlan] | type[PatchPlan] | type[ProbeSelection]):
     """Use provider-native structured output with a visible request heartbeat."""
     started = time.monotonic()
     done = threading.Event()
@@ -238,31 +238,34 @@ asyncio.run(main())
 
 
 @retry(**_RETRY)
-def _openai_chaos(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
-    system = "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python 3.12 HTTP probe for the supplied FastAPI target. The decoded attack_code_b64 MUST compile with Python compile(source, 'attack.py', 'exec'); do not use Markdown backticks, shell syntax, or pseudocode. No filesystem writes, subprocesses, external network, or secret access. The script MUST print expected_signal immediately before raising SystemExit when it proves the invariant violation. Return executable code only as base64 in attack_code_b64."
-    user = _context(target, graph) + f"\nDEFCON: {risk_level}"
+def _openai_probe_selection(target: Path, graph: KnowledgeGraph, risk_level: int) -> ProbeSelection:
+    system = "You are Sentinel's defensive chaos strategist. Inspect the Graphify graph and choose the one approved probe that best tests the supplied target. You do not write or return executable code. probe_id MUST exactly equal the target directory name. Explain the Graphify evidence for the selection concisely."
+    user = _context(target, graph) + f"\nDEFCON: {risk_level}\nApproved probe IDs: {target.name}"
     if live_provider() in {"openrouter", "google"}:
-        return _compatible_json(system, user, ChaosPlan).model_copy(update={"generator": live_generator_label()})
+        return _compatible_json(system, user, ProbeSelection)
     client = _client()
-    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": system}, {"role": "user", "content": user}], text_format=ChaosPlan)
+    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": system}, {"role": "user", "content": user}], text_format=ProbeSelection)
     if response.output_parsed is None:
-        raise RuntimeError("No structured chaos plan returned")
-    return response.output_parsed.model_copy(update={"generator": live_generator_label()})
+        raise RuntimeError("No structured probe selection returned")
+    return response.output_parsed
 
 
 def generate_chaos_plan(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
+    # Executable probes are a deliberately small, reviewed capability set.
+    # Graphify chooses the target context; an LLM must never be a prerequisite
+    # for producing syntactically valid code that enters the Docker arena.
+    # The live model is used for evidence interpretation and remediation.
     if _force_deterministic():
         return deterministic_chaos_plan(target, risk_level)
     if not live_api_key():
         if _require_live_ai():
             raise RuntimeError(f"SENTINEL_REQUIRE_LIVE_AI is set but {live_provider()} API access is missing.")
-        return deterministic_chaos_plan(target, risk_level)
-    try:
-        return _openai_chaos(target, graph, risk_level)
-    except Exception:
-        if _require_live_ai():
-            raise
-        return deterministic_chaos_plan(target, risk_level).model_copy(update={"generator": "deterministic-fallback-after-openai-error"})
+        return deterministic_chaos_plan(target, risk_level).model_copy(update={"generator": "graphify-approved-probe"})
+    selection = _openai_probe_selection(target, graph, risk_level)
+    if selection.probe_id != target.name:
+        raise RuntimeError(f"Model selected unsupported probe '{selection.probe_id}'; expected '{target.name}'.")
+    approved = deterministic_chaos_plan(target, selection.risk_level)
+    return approved.model_copy(update={"title": selection.title, "rationale": selection.rationale, "generator": live_generator_label()})
 
 
 def _fixed_source(kind: str) -> str:

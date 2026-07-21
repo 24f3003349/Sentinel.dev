@@ -81,10 +81,10 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
     console.print("[cyan][MAP][/cyan] phase 0/4: constructing the local Graphify knowledge graph ...")
     graph = build_graph(target, focus=FOCUS.get(target.name, ""), progress=lambda message: console.print(f"[dim][MAP][/dim] {message}"))
     console.print(f"[cyan][MAP][/cyan] Graphify mapped {len(graph.nodes)} nodes and {len(graph.edges)} edges.")
-    console.print(f"[cyan][AGENT][/cyan] phase 1/4: requesting a bounded chaos plan from {live_generator_label() if live_api_key() else 'deterministic fixtures'} ...")
+    console.print("[cyan][PROBE][/cyan] phase 1/4: Graphify selected the reviewed, target-bounded Docker probe ...")
     chaos = generate_chaos_plan(target, graph, defcon)
     console.print(f"[magenta][CHAOS][/magenta] {chaos.title}")
-    console.print(f"[dim][AGENT][/dim] chaos plan: {chaos.generator}")
+    console.print(f"[dim][PROBE][/dim] execution plan: {chaos.generator}")
     console.print("[cyan][ARENA][/cyan] phase 2/4: preparing the isolated Docker arena ...")
     result = run_attack(target, decode_code(chaos.attack_code_b64), chaos.expected_signal, progress=lambda message: console.print(f"[dim][ARENA][/dim] {message}"))
     color = "green" if result.status == RunStatus.passed else "red"
@@ -98,7 +98,7 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
         console.print("[bold red]AGENT PROBE REJECTED[/bold red] No patch branch was created because the generated probe did not prove the expected invariant.")
     elif result.status in {RunStatus.failed, RunStatus.timed_out} and patch:
         console.print("[bright_green][HEAL][/bright_green] creating a review branch and patch ...")
-        console.print(f"[cyan][AGENT][/cyan] phase 3/4: requesting remediation from {live_generator_label() if live_api_key() else 'deterministic fixtures'} ...")
+        console.print(f"[cyan][MODEL][/cyan] phase 3/4: {live_generator_label() if live_api_key() else 'deterministic fixtures'} is interpreting Graphify + Docker evidence and drafting remediation ...")
         remediation = generate_patch(target, graph, result)
         console.print(f"[dim][AGENT][/dim] remediation: {remediation.generator}")
         patched_source = decode_code(remediation.patched_source_b64)
