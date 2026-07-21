@@ -25,18 +25,18 @@ Direct OpenAI runs show `openai:gpt-5.6-sol` instead.
 
 ## Run the live demo
 
-Requirements: Docker Desktop, Python 3.12+, [uv](https://docs.astral.sh/uv/), and live API access. Use either OpenAI Platform or OpenRouter. ChatGPT/Codex plan credits do not power API calls.
+Requirements: Docker Desktop, Python 3.12+, [uv](https://docs.astral.sh/uv/), and live API access. Google AI Studio, OpenAI Platform, and OpenRouter are supported. ChatGPT/Codex plan credits do not power API calls.
 
 ```powershell
 cd Sentinel.dev
 uv sync --all-extras --frozen
-$env:SENTINEL_LLM_PROVIDER = "openrouter"
-$env:OPENROUTER_API_KEY = "your_new_openrouter_api_key"
-$env:SENTINEL_LLM_MODEL = "openai/gpt-5.6-sol"
+$env:SENTINEL_LLM_PROVIDER = "google"
+$env:GEMINI_API_KEY = "your_google_ai_studio_key"
+$env:SENTINEL_LLM_MODEL = "gemini-2.5-flash"
 uv run python run_sentinel_demo.py --mode live
 ```
 
-For direct OpenAI Platform access, set `SENTINEL_LLM_PROVIDER=openai`, `OPENAI_API_KEY`, and optionally `SENTINEL_LLM_MODEL=gpt-5.6-sol`. Live mode fails clearly if API access is missing; it never presents a deterministic result as an AI result.
+For direct OpenAI Platform access, set `SENTINEL_LLM_PROVIDER=openai`, `OPENAI_API_KEY`, and optionally `SENTINEL_LLM_MODEL=gpt-5.6-sol`. OpenRouter remains available with `SENTINEL_LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY`. Live mode fails clearly if API access is missing; it never presents a deterministic result as an AI result.
 
 ## Rehearse without API access
 

@@ -129,8 +129,8 @@ def run_demo(mode: str = "live") -> int:
             os.environ["SENTINEL_REQUIRE_LIVE_AI"] = "1"
             console.print(f"[bright_cyan][DEMO MODE] LIVE[/bright_cyan] GPT agent: {live_generator_label()}")
         if mode == "live" and not live_api_key():
-            key_name = "OPENROUTER_API_KEY" if live_provider() == "openrouter" else "OPENAI_API_KEY"
-            console.print(f"[bold red]LIVE GPT-5.6 SOL REQUIRED:[/] Set {key_name}. Sentinel will not substitute the deterministic demo path.")
+            key_name = {"openrouter": "OPENROUTER_API_KEY", "google": "GEMINI_API_KEY"}.get(live_provider(), "OPENAI_API_KEY")
+            console.print(f"[bold red]LIVE AGENT REQUIRED:[/] Set {key_name}. Sentinel will not substitute the deterministic demo path.")
             return 2
         if not _run_happy_path_tests(DEFAULT_TARGET):
             return 1

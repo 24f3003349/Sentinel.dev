@@ -38,8 +38,8 @@ def _force_deterministic() -> bool:
 
 def live_provider() -> str:
     provider = os.getenv("SENTINEL_LLM_PROVIDER", "openai").strip().lower()
-    if provider not in {"openai", "openrouter"}:
-        raise RuntimeError("SENTINEL_LLM_PROVIDER must be 'openai' or 'openrouter'.")
+    if provider not in {"openai", "openrouter", "google"}:
+        raise RuntimeError("SENTINEL_LLM_PROVIDER must be 'openai', 'openrouter', or 'google'.")
     return provider
 
 
@@ -47,11 +47,21 @@ def live_model() -> str:
     configured = os.getenv("SENTINEL_LLM_MODEL") or os.getenv("SENTINEL_OPENAI_MODEL")
     if configured:
         return configured
-    return "openai/gpt-5.6-sol" if live_provider() == "openrouter" else "gpt-5.6-sol"
+    provider = live_provider()
+    if provider == "openrouter":
+        return "openai/gpt-5.6-sol"
+    if provider == "google":
+        return "gemini-2.5-flash"
+    return "gpt-5.6-sol"
 
 
 def live_api_key() -> str | None:
-    return os.getenv("OPENROUTER_API_KEY") if live_provider() == "openrouter" else os.getenv("OPENAI_API_KEY")
+    provider = live_provider()
+    if provider == "openrouter":
+        return os.getenv("OPENROUTER_API_KEY")
+    if provider == "google":
+        return os.getenv("GEMINI_API_KEY")
+    return os.getenv("OPENAI_API_KEY")
 
 
 def live_generator_label() -> str:
@@ -76,6 +86,8 @@ def _client():
             timeout=120.0,
             max_retries=0,
         )
+    if provider == "google":
+        return OpenAI(api_key=key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/", timeout=120.0, max_retries=0)
     return OpenAI(api_key=key, timeout=120.0, max_retries=0)
 
 
@@ -111,8 +123,8 @@ def _parse_json_object(raw: str, schema: type[ChaosPlan] | type[PatchPlan]):
         raise RuntimeError(f"Model returned invalid JSON for {schema.__name__}: {exc}") from exc
 
 
-def _openrouter_json(system: str, user: str, schema: type[ChaosPlan] | type[PatchPlan]):
-    """Use OpenRouter's documented Chat Completions compatibility endpoint.
+def _compatible_json(system: str, user: str, schema: type[ChaosPlan] | type[PatchPlan]):
+    """Use Chat Completions JSON mode for OpenRouter and Google compatibility APIs.
 
     Responses.parse is OpenAI-specific and free routed models can emit plain text.
     This path explicitly requests a JSON object, then validates it locally.
@@ -128,16 +140,18 @@ def _openrouter_json(system: str, user: str, schema: type[ChaosPlan] | type[Patc
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
     try:
-        response = _client().chat.completions.create(
-        model=live_model(),
-        messages=[
-            {"role": "system", "content": f"{system} Reply with exactly one JSON object and nothing else."},
-            {"role": "user", "content": user},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0,
-        max_completion_tokens=4096,
-        )
+        request = {
+            "model": live_model(),
+            "messages": [
+                {"role": "system", "content": f"{system} Reply with exactly one JSON object and nothing else."},
+                {"role": "user", "content": user},
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0,
+        }
+        if live_provider() == "openrouter":
+            request["max_completion_tokens"] = 4096
+        response = _client().chat.completions.create(**request)
     finally:
         done.set()
         thread.join(timeout=0.1)
@@ -150,9 +164,9 @@ def _openrouter_json(system: str, user: str, schema: type[ChaosPlan] | type[Patc
         reasoning = getattr(choice.message, "reasoning", None)
         reasoning_hint = f", reasoning_chars={len(str(reasoning))}" if reasoning else ""
         raise RuntimeError(
-            "OpenRouter returned an empty completion "
+            f"{live_provider()} returned an empty completion "
             f"(finish_reason={choice.finish_reason or 'unknown'}{reasoning_hint}). "
-            "The routed model/provider produced no final JSON. Retry later or choose a different model."
+            "The model/provider produced no final JSON. Retry later or choose a different model."
         )
     return _parse_json_object(content, schema)
 
@@ -213,8 +227,8 @@ asyncio.run(main())
 def _openai_chaos(target: Path, graph: KnowledgeGraph, risk_level: int) -> ChaosPlan:
     system = "You are Sentinel's defensive chaos engineer. Generate a localhost-only Python HTTP probe for the supplied FastAPI target. No filesystem writes, subprocesses, external network, or secret access. Return executable code only as base64 in attack_code_b64."
     user = _context(target, graph) + f"\nDEFCON: {risk_level}"
-    if live_provider() == "openrouter":
-        return _openrouter_json(system, user, ChaosPlan).model_copy(update={"generator": live_generator_label()})
+    if live_provider() in {"openrouter", "google"}:
+        return _compatible_json(system, user, ChaosPlan).model_copy(update={"generator": live_generator_label()})
     client = _client()
     response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": system}, {"role": "user", "content": user}], text_format=ChaosPlan)
     if response.output_parsed is None:
@@ -315,10 +329,10 @@ def deterministic_patch(target: Path) -> PatchPlan:
 def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
     system = "You are a defensive remediation agent. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. Preserve the target API and address the observed telemetry/failure."
     user = _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}"
-    if live_provider() == "openrouter":
-        plan = _openrouter_json(system, user, PatchPlan)
+    if live_provider() in {"openrouter", "google"}:
+        plan = _compatible_json(system, user, PatchPlan)
         if plan.file_path != "main.py":
-            raise RuntimeError("OpenRouter remediation attempted to modify a file other than main.py.")
+            raise RuntimeError(f"{live_provider()} remediation attempted to modify a file other than main.py.")
         return plan.model_copy(update={"generator": live_generator_label()})
     client = _client()
     response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": system}, {"role": "user", "content": user}], text_format=PatchPlan)
