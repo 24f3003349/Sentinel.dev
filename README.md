@@ -54,6 +54,8 @@ $env:SENTINEL_LLM_MODEL = "gemini-3.5-flash"
 uv run python run_sentinel_demo.py --mode live
 ```
 
+**Google AI Studio offers a free tier for eligible Gemini API usage. Add your own key locally; no API key is stored in this repository.**
+
 Google AI Studio, OpenAI Platform, and OpenRouter are supported. ChatGPT/Codex plan credits do not supply API access.
 
 ## Included targets
