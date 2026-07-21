@@ -93,7 +93,13 @@ Open `http://localhost:3000`.
 
 ## Where Codex Accelerated Our Workflow
 
-- Built the Graphify mapping, Docker arena, remediation workflow, and dashboard.
-- Hardened the demo against timeouts, malformed model responses, and unsafe patches.
-- Added deterministic and live demonstration paths with verification logs and patch diffs.
-- Created tests, judge documentation, Git history, and the GitHub delivery workflow.
+Codex accelerated the engineering work that turns Sentinel from an idea into a reproducible demonstration:
+
+- Built the Graphify mapping pipeline, isolated Docker arena, remediation workflow, and dashboard.
+- Hardened the run against timeouts, malformed provider payloads, unsafe patches, and cross-platform Docker issues.
+- Added deterministic and live demonstration paths with clear telemetry, patch diffs, and repeat verification.
+- Created the test suite, judge documentation, Git workflow, and GitHub delivery materials.
+
+## How GPT-5.6 Helps
+
+When configured through OpenAI Platform or OpenRouter, GPT-5.6 uses the Graphify map and Docker evidence to select a bounded probe and approved remediation strategy. Sentinel then applies the reviewed remediation and proves the result by rerunning the same Docker probe.
