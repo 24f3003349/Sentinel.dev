@@ -2,10 +2,9 @@
   "name": "Sentinel.dev — Docker Arena",
   "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:4": {}
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
   },
-  "privileged": true,
-  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && sudo ln -sf $HOME/.local/bin/uv /usr/local/bin/uv && uv sync --all-extras --frozen",
+  "postCreateCommand": "python -m pip install --user uv && $HOME/.local/bin/uv sync --all-extras --frozen",
   "remoteUser": "vscode",
   "customizations": {
     "vscode": {

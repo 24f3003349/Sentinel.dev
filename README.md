@@ -45,19 +45,19 @@ git checkout main
 
 ## GitHub Codespaces
 
-Click **Open in GitHub Codespaces** above to create a new Codespace from `main`, then wait for the dev container to finish building. It provisions Python 3.12, `uv`, project dependencies, and Docker-in-Docker.
+Click **Open in GitHub Codespaces** above to create a new Codespace from `main`, then wait for the dev container to finish building. It provisions Python 3.12, `uv`, project dependencies, and Docker access.
 
 In the Codespaces terminal, run:
 
 ```bash
 docker info
-uv run python run_sentinel_demo.py --mode deterministic
+$HOME/.local/bin/uv run python run_sentinel_demo.py --mode deterministic
 ```
 
 For a detection-only CI-style check, run:
 
 ```bash
-uv run python -m sentinel.cli attack dummy_targets/race_condition --no-patch
+$HOME/.local/bin/uv run python -m sentinel.cli attack dummy_targets/race_condition --no-patch
 ```
 
 The detection-only command intentionally exits with status `1` when it proves the seeded vulnerability.
