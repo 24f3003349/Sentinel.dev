@@ -5,6 +5,7 @@ import subprocess
 import uuid
 import os
 import re
+from difflib import unified_diff
 from pathlib import Path
 
 from git import Repo
@@ -40,9 +41,27 @@ def _open_github_pr(repo: Repo, branch: str, base: str) -> str | None:
     return pull.html_url
 
 
+def _is_dirty(repository_root: Path) -> bool:
+    """Check worktree state without GitPython's diff-based implementation.
+
+    Some Windows environments set Git's ``diff.noIndex`` globally, which makes
+    ``git diff --cached`` invalid.  ``git status --porcelain`` is unaffected.
+    """
+    completed = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repository_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode:
+        raise RuntimeError(f"Unable to inspect Git worktree: {completed.stderr.strip()}")
+    return bool(completed.stdout.strip())
+
+
 def apply_patch_on_branch(repository_root: Path, target: Path, patch: PatchPlan) -> GitPatchResult:
     repo = Repo(repository_root)
-    if repo.is_dirty(untracked_files=True):
+    if _is_dirty(repository_root):
         raise RuntimeError("Refusing to patch a dirty repository; commit or stash changes first.")
     main_branch = repo.heads.main
     main_branch.checkout()
@@ -54,10 +73,20 @@ def apply_patch_on_branch(repository_root: Path, target: Path, patch: PatchPlan)
     destination = (target / patch.file_path).resolve()
     if target.resolve() not in destination.parents:
         raise RuntimeError("Patch path escaped the approved target directory")
-    destination.write_text(decode_code(patch.patched_source_b64), encoding="utf-8")
+    original_source = destination.read_text(encoding="utf-8")
+    patched_source = decode_code(patch.patched_source_b64)
+    destination.write_text(patched_source, encoding="utf-8")
     repo.index.add([str(destination.relative_to(repository_root))])
     commit = repo.index.commit("Auto-patch: serialize ticket inventory mutation")
-    diff = repo.git.show("--format=", "--stat", "--patch", commit.hexsha)
+    # Render the reviewed diff directly. This avoids a Windows/GitPython display
+    # incompatibility while keeping Git responsible for the actual commit.
+    relative = destination.relative_to(repository_root).as_posix()
+    diff = "".join(unified_diff(
+        original_source.splitlines(keepends=True),
+        patched_source.splitlines(keepends=True),
+        fromfile=f"a/{relative}",
+        tofile=f"b/{relative}",
+    ))
     pr_url = _open_github_pr(repo, branch_name, main_branch.name)
     return GitPatchResult(branch=branch_name, commit=commit.hexsha, diff=diff, github_pr_url=pr_url)
 

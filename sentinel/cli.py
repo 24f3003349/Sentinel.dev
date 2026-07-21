@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -10,12 +12,13 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from sentinel.gitops import apply_patch_on_branch
 from sentinel.graph_memory import build_graph
 from sentinel.sandbox import docker_available, run_attack
 from sentinel.schemas import RunStatus, SentinelReport
-from sentinel.swarm_agents import decode_code, generate_chaos_plan, generate_patch, live_api_key, live_generator_label, live_provider
+from sentinel.swarm_agents import decode_code, generate_chaos_plan, generate_patch, live_api_key, live_generator_label, live_provider, repair_invalid_patch
 
 app = typer.Typer(help="Sentinel.dev - Graphify-guided chaos testing and verified remediation.", no_args_is_help=True)
 console = Console()
@@ -28,6 +31,46 @@ def _report_path(target_name: str | None = None) -> Path:
     directory = ROOT / "reports"
     directory.mkdir(exist_ok=True)
     return directory / (f"{target_name}.json" if target_name else "latest.json")
+
+
+def _patch_preflight_error(target: Path, source: str, attack_code: str, expected_signal: str) -> ValueError | None:
+    """Reject patches that compile but cannot start the target's real test suite.
+
+    This runs in a disposable copy before any Git branch or commit is made.
+    It catches startup failures *and* verifies the candidate against the exact
+    Docker probe that produced the finding.  A Python compile check alone is
+    not meaningful for SQL semantics.
+    """
+    try:
+        compile(source, "main.py", "exec")
+    except SyntaxError as exc:
+        return ValueError(f"Python compilation failed at main.py:{exc.lineno}:{exc.offset}: {exc.msg}")
+    with tempfile.TemporaryDirectory(prefix="sentinel-patch-preflight-") as temporary:
+        candidate = Path(temporary) / target.name
+        shutil.copytree(target, candidate, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.db"))
+        (candidate / "main.py").write_text(source, encoding="utf-8")
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(candidate) + os.pathsep + environment.get("PYTHONPATH", "")
+        completed = subprocess.run(
+            [sys.executable, "-m", "pytest", "test_main.py", "-q"],
+            cwd=candidate,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stdout + "\n" + completed.stderr).strip()
+            return ValueError(f"Clean-room happy-path preflight failed:\n{detail[-3000:]}")
+        probe = run_attack(candidate, attack_code, expected_signal, require_signal=False)
+    if probe.status != RunStatus.passed:
+        detail = (probe.stdout + "\n" + probe.stderr).strip()
+        return ValueError(
+            "Clean-room Docker invariant preflight failed; the original failure still exists "
+            f"({probe.failure_kind or probe.status.value}).\n{detail[-3000:]}"
+        )
+    return None
 
 
 def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
@@ -59,10 +102,15 @@ def _execute(target: Path, defcon: int, patch: bool) -> SentinelReport:
         remediation = generate_patch(target, graph, result)
         console.print(f"[dim][AGENT][/dim] remediation: {remediation.generator}")
         patched_source = decode_code(remediation.patched_source_b64)
-        try:
-            compile(patched_source, "main.py", "exec")
-        except SyntaxError as exc:
-            console.print(f"[bold red]AGENT PATCH REJECTED[/bold red] main.py:{exc.lineno}:{exc.offset}: {exc.msg}")
+        attack_code = decode_code(chaos.attack_code_b64)
+        preflight_error = _patch_preflight_error(target, patched_source, attack_code, chaos.expected_signal)
+        if preflight_error and remediation.generator != "deterministic-demo":
+            console.print("[yellow][HEAL][/yellow] candidate failed clean-room startup/test preflight; requesting one evidence-guided correction ...")
+            remediation = repair_invalid_patch(target, graph, result, remediation, preflight_error)
+            patched_source = decode_code(remediation.patched_source_b64)
+            preflight_error = _patch_preflight_error(target, patched_source, attack_code, chaos.expected_signal)
+        if preflight_error:
+            console.print(Text(f"AGENT PATCH REJECTED {preflight_error}", style="bold red"))
             report.patch = remediation
             serialized = report.model_dump_json(indent=2)
             _report_path().write_text(serialized, encoding="utf-8")
@@ -150,7 +198,7 @@ def run_demo(mode: str = "live") -> int:
         final = report.verification or report.sandbox
         return 0 if final.status == RunStatus.passed else 1
     except Exception as exc:
-        console.print(f"[bold red]DEMO FAILED:[/] {exc}")
+        console.print(Text(f"DEMO FAILED: {exc}", style="bold red"))
         return 1
 
 

@@ -364,8 +364,8 @@ def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) ->
 
 
 @retry(**_RETRY)
-def _repair_invalid_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult, invalid: PatchPlan, error: ValueError) -> PatchPlan:
-    system = "You are repairing an invalid Python patch. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. It MUST compile with Python compile(source, 'main.py', 'exec'). Do not use Markdown or backticks. Preserve the FastAPI /book and /health API and fix the observed race."
+def repair_invalid_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult, invalid: PatchPlan, error: ValueError) -> PatchPlan:
+    system = "You are repairing a rejected FastAPI patch. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. It MUST compile and it MUST start successfully with the target's existing pytest happy-path suite. The reported rejection may be a runtime error such as invalid SQL, not only a Python syntax error. Do not use Markdown or backticks. Preserve the FastAPI /book and /health API and fix the observed race."
     invalid_source = decode_code(invalid.patched_source_b64)
     user = _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}\nInvalid candidate source:\n{invalid_source}\nCompiler error: {error}"
     if live_provider() in {"openrouter", "google"}:
@@ -390,7 +390,7 @@ def generate_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -
             _validate_patch(plan)
         except ValueError as error:
             _progress("generated patch failed Python validation; requesting one live compiler-guided correction.")
-            plan = _repair_invalid_patch(target, graph, result, plan, error)
+            plan = repair_invalid_patch(target, graph, result, plan, error)
             _validate_patch(plan)
         return plan
     except Exception:
