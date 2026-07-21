@@ -103,3 +103,7 @@ Codex accelerated the engineering work that turns Sentinel from an idea into a r
 ## How GPT-5.6 Helps
 
 When configured through OpenAI Platform or OpenRouter, GPT-5.6 uses the Graphify map and Docker evidence to select a bounded probe and approved remediation strategy. Sentinel then applies the reviewed remediation and proves the result by rerunning the same Docker probe.
+
+## License
+
+Sentinel.dev is open source under the [MIT License](LICENSE).
