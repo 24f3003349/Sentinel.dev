@@ -339,9 +339,17 @@ def deterministic_patch(target: Path) -> PatchPlan:
     return PatchPlan(title=f"Remediate {kind.replace('_', ' ')}", rationale="Replace the unsafe operation with a bounded or atomic implementation.", patched_source_b64=_encode(_fixed_source(kind)), verification_note="Sentinel reruns the same Docker chaos probe after this commit.", generator="deterministic-demo")
 
 
+def _validate_patch(plan: PatchPlan) -> None:
+    try:
+        source = decode_code(plan.patched_source_b64)
+        compile(source, "main.py", "exec")
+    except Exception as exc:
+        raise ValueError(f"Generated main.py is not valid Python: {exc}") from exc
+
+
 @retry(**_RETRY)
 def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
-    system = "You are a defensive remediation agent. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. Preserve the target API and address the observed telemetry/failure."
+    system = "You are a defensive remediation agent. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. Preserve the target API and address the observed telemetry/failure. Before returning, ensure decoded patched_source_b64 compiles with Python compile(source, 'main.py', 'exec'). Do not use Markdown, backticks, pseudocode, or incomplete blocks."
     user = _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}"
     if live_provider() in {"openrouter", "google"}:
         plan = _compatible_json(system, user, PatchPlan)
@@ -355,6 +363,20 @@ def _openai_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) ->
     return response.output_parsed.model_copy(update={"generator": live_generator_label()})
 
 
+@retry(**_RETRY)
+def _repair_invalid_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult, invalid: PatchPlan, error: ValueError) -> PatchPlan:
+    system = "You are repairing an invalid Python patch. Return a complete safe replacement for main.py only, base64-encoded in patched_source_b64. It MUST compile with Python compile(source, 'main.py', 'exec'). Do not use Markdown or backticks. Preserve the FastAPI /book and /health API and fix the observed race."
+    invalid_source = decode_code(invalid.patched_source_b64)
+    user = _context(target, graph) + f"\nSandbox result:\n{result.model_dump_json()}\nInvalid candidate source:\n{invalid_source}\nCompiler error: {error}"
+    if live_provider() in {"openrouter", "google"}:
+        return _compatible_json(system, user, PatchPlan).model_copy(update={"generator": live_generator_label()})
+    client = _client()
+    response = client.responses.parse(model=live_model(), input=[{"role": "system", "content": system}, {"role": "user", "content": user}], text_format=PatchPlan)
+    if response.output_parsed is None:
+        raise RuntimeError("No corrected patch returned")
+    return response.output_parsed.model_copy(update={"generator": live_generator_label()})
+
+
 def generate_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -> PatchPlan:
     if _force_deterministic():
         return deterministic_patch(target)
@@ -363,7 +385,14 @@ def generate_patch(target: Path, graph: KnowledgeGraph, result: SandboxResult) -
             raise RuntimeError(f"SENTINEL_REQUIRE_LIVE_AI is set but {live_provider()} API access is missing.")
         return deterministic_patch(target)
     try:
-        return _openai_patch(target, graph, result)
+        plan = _openai_patch(target, graph, result)
+        try:
+            _validate_patch(plan)
+        except ValueError as error:
+            _progress("generated patch failed Python validation; requesting one live compiler-guided correction.")
+            plan = _repair_invalid_patch(target, graph, result, plan, error)
+            _validate_patch(plan)
+        return plan
     except Exception:
         if _require_live_ai():
             raise
